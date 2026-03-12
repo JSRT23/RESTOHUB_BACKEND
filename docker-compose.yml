@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: restohub_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: restohub
+      POSTGRES_PASSWORD: restohub
+      POSTGRES_DB: restohub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: restohub_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  menu_service:
+    build: ./services/menu_service
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./services/menu_service:/app
+    ports:
+      - "8001:8000"
+    depends_on:
+      - postgres
+      - rabbitmq
+
+  order_service:
+    build: ./services/order_service
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./services/order_service:/app
+    ports:
+      - "8002:8000"
+    depends_on:
+      - postgres
+      - rabbitmq
+
+volumes:
+  postgres_data:
