@@ -1,0 +1,2 @@
+CREATE DATABASE menu_db;
+CREATE DATABASE order_db;
