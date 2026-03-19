@@ -46,5 +46,18 @@ services:
       - postgres
       - rabbitmq
 
+  gateway_service:
+    build: ./services/gateway_service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/gateway_service:/app
+    environment:
+      - MENU_SERVICE_URL=http://menu_service:8000/api/menu
+      - ORDER_SERVICE_URL=http://order_service:8000/api/orders
+    depends_on:
+      - menu_service
+      - order_service
+
 volumes:
   postgres_data:

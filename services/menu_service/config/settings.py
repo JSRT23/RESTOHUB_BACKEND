@@ -29,7 +29,17 @@ SECRET_KEY = 'django-insecure-41zwd347!ii2@tn+cr0$%$t4qi=fmkx1mv5@(9!gfbg_dn1g5@
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*", "menu_service", "localhost", "127.0.0.1", "0.0.0.0"]
+
+# RabbitMQ
+RABBITMQ = {
+    "HOST":     os.getenv("RABBITMQ_HOST",     "rabbitmq"),
+    "PORT":     int(os.getenv("RABBITMQ_PORT", 5672)),
+    "USER":     os.getenv("RABBITMQ_USER",     "guest"),
+    "PASSWORD": os.getenv("RABBITMQ_PASSWORD", "guest"),
+    "VHOST":    os.getenv("RABBITMQ_VHOST",    "/"),
+    "EXCHANGE": os.getenv("RABBITMQ_EXCHANGE", "restohub"),
+}
 
 
 # Application definition
@@ -41,9 +51,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'graphene_django',
     'rest_framework',
     'app.menu',
+
 ]
+
+GRAPHENE = {
+    "SCHEMA": "config.schema.schema"
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -112,12 +128,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
-
+LANGUAGE_CODE = "es-co"
+TIME_ZONE = "America/Bogota"
 USE_I18N = True
-
 USE_TZ = True
 
 

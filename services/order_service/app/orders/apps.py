@@ -2,4 +2,8 @@ from django.apps import AppConfig
 
 
 class OrdersConfig(AppConfig):
-    name = 'app.orders'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "app.orders"
+
+    def ready(self):
+        import app.orders.signals  # noqa
