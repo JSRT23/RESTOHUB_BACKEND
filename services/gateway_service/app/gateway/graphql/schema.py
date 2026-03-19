@@ -2,9 +2,10 @@ import graphene
 from .types import (
     RestauranteType, CategoriaType, PlatoType, IngredienteType,
     PrecioPlatoType, MenuRestauranteType, MenuCategoriaType, MenuPlatoType,
-    PedidoType,
+    PedidoType, DetallePedidoType, ComandaCocinaType, EntregaPedidoType,
+    SeguimientoPedidoType,
 )
-from ..client import menu_client
+from ..client import menu_client, order_client
 
 
 # ═══════════════════════════════════════════
@@ -33,9 +34,26 @@ class Query(graphene.ObjectType):
         activo=graphene.Boolean(),
     )
 
+    # ── Orders ──
+    pedidos = graphene.List(
+        PedidoType,
+        estado=graphene.String(),
+        canal=graphene.String(),
+        restaurante_id=graphene.ID(),
+        cliente_id=graphene.ID(),
+    )
+    pedido = graphene.Field(PedidoType, id=graphene.ID(required=True))
+    comandas = graphene.List(
+        ComandaCocinaType,
+        estado=graphene.String(),
+        estacion=graphene.String(),
+        pedido_id=graphene.ID(),
+    )
+    comanda = graphene.Field(ComandaCocinaType, id=graphene.ID(required=True))
+    entrega = graphene.Field(EntregaPedidoType, id=graphene.ID(required=True))
+
     # ─────────────────────────────────────────
-    # Resolvers — llaman al REST client
-    # El cliente retorna dict/list → lo mapeamos al ObjectType
+    # Resolvers — Menu
     # ─────────────────────────────────────────
 
     def resolve_restaurantes(self, info, activo=None, pais=None):
@@ -50,19 +68,15 @@ class Query(graphene.ObjectType):
         data = menu_client.get_menu_restaurante(id)
         if not data:
             return None
-
         categorias = [
             MenuCategoriaType(
                 categoria_id=cat.get("categoria_id"),
                 nombre=cat.get("nombre"),
                 orden=cat.get("orden"),
-                platos=[
-                    MenuPlatoType(**p) for p in cat.get("platos", [])
-                ],
+                platos=[MenuPlatoType(**p) for p in cat.get("platos", [])],
             )
             for cat in data.get("categorias", [])
         ]
-
         return MenuRestauranteType(
             restaurante_id=data.get("restaurante_id"),
             nombre=data.get("nombre"),
@@ -99,6 +113,71 @@ class Query(graphene.ObjectType):
             activo=activo,
         )
         return [PrecioPlatoType(**p) for p in data]
+
+    # ─────────────────────────────────────────
+    # Resolvers — Orders
+    # ─────────────────────────────────────────
+
+    def resolve_pedidos(self, info, estado=None, canal=None, restaurante_id=None, cliente_id=None):
+        data = order_client.get_pedidos(
+            estado=estado,
+            canal=canal,
+            restaurante_id=restaurante_id,
+            cliente_id=cliente_id,
+        )
+        return [_map_pedido(p) for p in data]
+
+    def resolve_pedido(self, info, id):
+        data = order_client.get_pedido(id)
+        return _map_pedido(data) if data else None
+
+    def resolve_comandas(self, info, estado=None, estacion=None, pedido_id=None):
+        data = order_client.get_comandas(
+            estado=estado, estacion=estacion, pedido_id=pedido_id)
+        return [ComandaCocinaType(**c) for c in data]
+
+    def resolve_comanda(self, info, id):
+        data = order_client.get_comanda(id)
+        return ComandaCocinaType(**data) if data else None
+
+    def resolve_entrega(self, info, id):
+        data = order_client.get_entrega(id)
+        return EntregaPedidoType(**data) if data else None
+
+
+# ─────────────────────────────────────────
+# Helper mapper — Pedido
+# ─────────────────────────────────────────
+
+def _map_pedido(data: dict) -> PedidoType:
+    """Mapea el dict del REST al ObjectType incluyendo relaciones anidadas."""
+    return PedidoType(
+        id=data.get("id"),
+        restaurante_id=data.get("restaurante_id"),
+        cliente_id=data.get("cliente_id"),
+        canal=data.get("canal"),
+        estado=data.get("estado"),
+        prioridad=data.get("prioridad"),
+        total=data.get("total"),
+        moneda=data.get("moneda"),
+        mesa_id=data.get("mesa_id"),
+        fecha_creacion=data.get("fecha_creacion"),
+        fecha_entrega_estimada=data.get("fecha_entrega_estimada"),
+        detalles=[
+            DetallePedidoType(**d)
+            for d in data.get("detalles", [])
+        ],
+        comandas=[
+            ComandaCocinaType(**c)
+            for c in data.get("comandas", [])
+        ],
+        seguimientos=[
+            SeguimientoPedidoType(**s)
+            for s in data.get("seguimientos", [])
+        ],
+        entrega=EntregaPedidoType(
+            **data["entrega"]) if data.get("entrega") else None,
+    )
 
 
 # ═══════════════════════════════════════════
@@ -260,9 +339,9 @@ class CrearIngrediente(graphene.Mutation):
 
     def mutate(self, info, nombre, unidad_medida, descripcion=None):
         data = menu_client.crear_ingrediente({
-            "nombre": nombre,
+            "nombre":        nombre,
             "unidad_medida": unidad_medida,
-            "descripcion": descripcion,
+            "descripcion":   descripcion,
         })
         if not data:
             return CrearIngrediente(ok=False, error="Error al crear ingrediente.")
@@ -283,9 +362,9 @@ class CrearPrecioPlato(graphene.Mutation):
 
     def mutate(self, info, plato_id, restaurante_id, precio, fecha_inicio, fecha_fin=None):
         data = menu_client.crear_precio({
-            "plato":       plato_id,
-            "restaurante": restaurante_id,
-            "precio":      precio,
+            "plato":        plato_id,
+            "restaurante":  restaurante_id,
+            "precio":       precio,
             "fecha_inicio": fecha_inicio,
             "fecha_fin":    fecha_fin,
         })
@@ -295,37 +374,264 @@ class CrearPrecioPlato(graphene.Mutation):
 
 
 # ═══════════════════════════════════════════
+# MUTATIONS — Orders
+# ═══════════════════════════════════════════
+
+class DetalleInput(graphene.InputObjectType):
+    plato_id = graphene.ID(required=True)
+    nombre_plato = graphene.String(required=True)
+    precio_unitario = graphene.Float(required=True)
+    cantidad = graphene.Int(required=True)
+    notas = graphene.String()
+
+
+class CrearPedido(graphene.Mutation):
+    class Arguments:
+        restaurante_id = graphene.ID(required=True)
+        canal = graphene.String(required=True)
+        moneda = graphene.String(required=True)
+        detalles = graphene.List(graphene.NonNull(DetalleInput), required=True)
+        cliente_id = graphene.ID()
+        prioridad = graphene.Int()
+        mesa_id = graphene.ID()
+        fecha_entrega_estimada = graphene.String()
+
+    ok = graphene.Boolean()
+    pedido = graphene.Field(PedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, restaurante_id, canal, moneda, detalles, **kwargs):
+        data = order_client.crear_pedido({
+            "restaurante_id":         restaurante_id,
+            "canal":                  canal,
+            "moneda":                 moneda,
+            "detalles":               [dict(d) for d in detalles],
+            "cliente_id":             kwargs.get("cliente_id"),
+            "prioridad":              kwargs.get("prioridad", 2),
+            "mesa_id":                kwargs.get("mesa_id"),
+            "fecha_entrega_estimada": kwargs.get("fecha_entrega_estimada"),
+        })
+        if not data:
+            return CrearPedido(ok=False, error="Error al crear pedido.")
+        return CrearPedido(ok=True, pedido=_map_pedido(data))
+
+
+class ConfirmarPedido(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+        descripcion = graphene.String()
+
+    ok = graphene.Boolean()
+    pedido = graphene.Field(PedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id, descripcion=""):
+        data = order_client.confirmar_pedido(id, descripcion)
+        if not data:
+            return ConfirmarPedido(ok=False, error="Error al confirmar pedido.")
+        return ConfirmarPedido(ok=True, pedido=_map_pedido(data))
+
+
+class CancelarPedido(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+        descripcion = graphene.String()
+
+    ok = graphene.Boolean()
+    pedido = graphene.Field(PedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id, descripcion=""):
+        data = order_client.cancelar_pedido(id, descripcion)
+        if not data:
+            return CancelarPedido(ok=False, error="Error al cancelar pedido.")
+        return CancelarPedido(ok=True, pedido=_map_pedido(data))
+
+
+class MarcarPedidoListo(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+        descripcion = graphene.String()
+
+    ok = graphene.Boolean()
+    pedido = graphene.Field(PedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id, descripcion=""):
+        data = order_client.marcar_listo(id, descripcion)
+        if not data:
+            return MarcarPedidoListo(ok=False, error="Error al marcar pedido como listo.")
+        return MarcarPedidoListo(ok=True, pedido=_map_pedido(data))
+
+
+class EntregarPedido(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+        descripcion = graphene.String()
+
+    ok = graphene.Boolean()
+    pedido = graphene.Field(PedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id, descripcion=""):
+        data = order_client.entregar_pedido(id, descripcion)
+        if not data:
+            return EntregarPedido(ok=False, error="Error al entregar pedido.")
+        return EntregarPedido(ok=True, pedido=_map_pedido(data))
+
+
+class CrearComanda(graphene.Mutation):
+    class Arguments:
+        pedido_id = graphene.ID(required=True)
+        estacion = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    comanda = graphene.Field(ComandaCocinaType)
+    error = graphene.String()
+
+    def mutate(self, info, pedido_id, estacion):
+        data = order_client.crear_comanda(
+            {"pedido": pedido_id, "estacion": estacion})
+        if not data:
+            return CrearComanda(ok=False, error="Error al crear comanda.")
+        return CrearComanda(ok=True, comanda=ComandaCocinaType(**data))
+
+
+class IniciarComanda(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    comanda = graphene.Field(ComandaCocinaType)
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        data = order_client.iniciar_comanda(id)
+        if not data:
+            return IniciarComanda(ok=False, error="Error al iniciar comanda.")
+        return IniciarComanda(ok=True, comanda=ComandaCocinaType(**data))
+
+
+class ComandaLista(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    comanda = graphene.Field(ComandaCocinaType)
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        data = order_client.comanda_lista(id)
+        if not data:
+            return ComandaLista(ok=False, error="Error al marcar comanda como lista.")
+        return ComandaLista(ok=True, comanda=ComandaCocinaType(**data))
+
+
+class CrearEntrega(graphene.Mutation):
+    class Arguments:
+        pedido_id = graphene.ID(required=True)
+        tipo_entrega = graphene.String(required=True)
+        direccion = graphene.String()
+        repartidor_id = graphene.ID()
+        repartidor_nombre = graphene.String()
+
+    ok = graphene.Boolean()
+    entrega = graphene.Field(EntregaPedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, pedido_id, tipo_entrega, **kwargs):
+        data = order_client.crear_entrega({
+            "pedido":             pedido_id,
+            "tipo_entrega":       tipo_entrega,
+            "direccion":          kwargs.get("direccion"),
+            "repartidor_id":      kwargs.get("repartidor_id"),
+            "repartidor_nombre":  kwargs.get("repartidor_nombre"),
+        })
+        if not data:
+            return CrearEntrega(ok=False, error="Error al crear entrega.")
+        return CrearEntrega(ok=True, entrega=EntregaPedidoType(**data))
+
+
+class EntregaEnCamino(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    entrega = graphene.Field(EntregaPedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        data = order_client.entrega_en_camino(id)
+        if not data:
+            return EntregaEnCamino(ok=False, error="Error al actualizar entrega.")
+        return EntregaEnCamino(ok=True, entrega=EntregaPedidoType(**data))
+
+
+class CompletarEntrega(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    entrega = graphene.Field(EntregaPedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        data = order_client.completar_entrega(id)
+        if not data:
+            return CompletarEntrega(ok=False, error="Error al completar entrega.")
+        return CompletarEntrega(ok=True, entrega=EntregaPedidoType(**data))
+
+
+class EntregaFallo(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    entrega = graphene.Field(EntregaPedidoType)
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        data = order_client.entrega_fallo(id)
+        if not data:
+            return EntregaFallo(ok=False, error="Error al registrar fallo de entrega.")
+        return EntregaFallo(ok=True, entrega=EntregaPedidoType(**data))
+
+
+# ═══════════════════════════════════════════
 # MUTATION ROOT
 # ═══════════════════════════════════════════
 
 class Mutation(graphene.ObjectType):
-    # Restaurante
+    # Menu
     crear_restaurante = CrearRestaurante.Field()
     actualizar_restaurante = ActualizarRestaurante.Field()
     activar_restaurante = ActivarRestaurante.Field()
     desactivar_restaurante = DesactivarRestaurante.Field()
-
-    # Categoría
     crear_categoria = CrearCategoria.Field()
-
-    # Plato
     crear_plato = CrearPlato.Field()
     activar_plato = ActivarPlato.Field()
     desactivar_plato = DesactivarPlato.Field()
     agregar_ingrediente_plato = AgregarIngredientePlato.Field()
-
-    # Ingrediente
     crear_ingrediente = CrearIngrediente.Field()
-
-    # Precio
     crear_precio_plato = CrearPrecioPlato.Field()
+
+    # Orders
+    crear_pedido = CrearPedido.Field()
+    confirmar_pedido = ConfirmarPedido.Field()
+    cancelar_pedido = CancelarPedido.Field()
+    marcar_listo = MarcarPedidoListo.Field()
+    entregar_pedido = EntregarPedido.Field()
+    crear_comanda = CrearComanda.Field()
+    iniciar_comanda = IniciarComanda.Field()
+    comanda_lista = ComandaLista.Field()
+    crear_entrega = CrearEntrega.Field()
+    entrega_en_camino = EntregaEnCamino.Field()
+    completar_entrega = CompletarEntrega.Field()
+    entrega_fallo = EntregaFallo.Field()
 
 
 # ═══════════════════════════════════════════
 # SCHEMA RAÍZ
-# Aquí se irán agregando los schemas de los
-# otros servicios a medida que estén listos:
-# order, inventory, staff, loyalty
 # ═══════════════════════════════════════════
 
 schema = graphene.Schema(query=Query, mutation=Mutation)
