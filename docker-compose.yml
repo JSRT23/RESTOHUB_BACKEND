@@ -46,18 +46,34 @@ services:
       - postgres
       - rabbitmq
 
+  inventory_service:
+    build: ./services/inventory_service
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./services/inventory_service:/app
+    ports:
+      - "8003:8000"
+    env_file:
+      - ./services/inventory_service/.env
+    depends_on:
+      - postgres
+      - rabbitmq
+
   gateway_service:
     build: ./services/gateway_service
-    ports:
-      - "8000:8000"
+    command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./services/gateway_service:/app
+    ports:
+      - "8000:8000"
     environment:
       - MENU_SERVICE_URL=http://menu_service:8000/api/menu
       - ORDER_SERVICE_URL=http://order_service:8000/api/orders
+      - INVENTORY_SERVICE_URL=http://inventory_service:8000/api/inventory
     depends_on:
       - menu_service
       - order_service
+      - inventory_service
 
 volumes:
   postgres_data:
