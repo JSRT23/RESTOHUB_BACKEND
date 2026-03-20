@@ -319,10 +319,14 @@ class LoteIngrediente(models.Model):
 
     @property
     def esta_vencido(self) -> bool:
+        if self.fecha_vencimiento is None:
+            return None
         return self.fecha_vencimiento < timezone.now().date()
 
     @property
     def dias_para_vencer(self) -> int:
+        if not self.fecha_vencimiento:
+            return None
         return (self.fecha_vencimiento - timezone.now().date()).days
 
     def __str__(self):
