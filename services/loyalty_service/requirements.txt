@@ -1,0 +1,8 @@
+Django
+djangorestframework
+psycopg2-binary
+pika
+python-dotenv
+graphene-django
+django-redis
+redis

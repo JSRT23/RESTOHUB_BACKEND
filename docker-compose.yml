@@ -1,4 +1,8 @@
 services:
+  # ---------------------------------------------------------------------------
+  # Infraestructura
+  # ---------------------------------------------------------------------------
+
   postgres:
     image: postgres:15
     container_name: restohub_postgres
@@ -12,13 +16,43 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U restohub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
     image: rabbitmq:3-management
     container_name: restohub_rabbitmq
+    restart: always
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: restohub_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Servicios existentes
+  # ---------------------------------------------------------------------------
 
   menu_service:
     build: ./services/menu_service
@@ -30,8 +64,10 @@ services:
     env_file:
       - ./services/menu_service/.env
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   order_service:
     build: ./services/order_service
@@ -43,8 +79,10 @@ services:
     env_file:
       - ./services/order_service/.env
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   inventory_service:
     build: ./services/inventory_service
@@ -56,8 +94,80 @@ services:
     env_file:
       - ./services/inventory_service/.env
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Nuevos servicios
+  # ---------------------------------------------------------------------------
+
+  loyalty_service:
+    build: ./services/loyalty_service
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./services/loyalty_service:/app
+    ports:
+      - "8004:8000"
+    env_file:
+      - ./services/loyalty_service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  loyalty_consumer:
+    build: ./services/loyalty_service
+    command: python manage.py consume_loyalty_events
+    volumes:
+      - ./services/loyalty_service:/app
+    env_file:
+      - ./services/loyalty_service/.env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  staff_service:
+    build: ./services/staff_service
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./services/staff_service:/app
+    ports:
+      - "8005:8000"
+    env_file:
+      - ./services/staff_service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  staff_consumer:
+    build: ./services/staff_service
+    command: python manage.py consume_staff_events
+    volumes:
+      - ./services/staff_service:/app
+    env_file:
+      - ./services/staff_service/.env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Gateway
+  # ---------------------------------------------------------------------------
 
   gateway_service:
     build: ./services/gateway_service
@@ -70,10 +180,15 @@ services:
       - MENU_SERVICE_URL=http://menu_service:8000/api/menu
       - ORDER_SERVICE_URL=http://order_service:8000/api/orders
       - INVENTORY_SERVICE_URL=http://inventory_service:8000/api/inventory
+      - LOYALTY_SERVICE_URL=http://loyalty_service:8000/api/loyalty
+      - STAFF_SERVICE_URL=http://staff_service:8000/api/staff
     depends_on:
       - menu_service
       - order_service
       - inventory_service
+      - loyalty_service
+      - staff_service
 
 volumes:
   postgres_data:
+  redis_data:
