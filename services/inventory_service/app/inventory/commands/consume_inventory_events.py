@@ -398,3 +398,88 @@ class Command(BaseCommand):
 
         logger.info(
             "[inventory] Stock revertido para pedido cancelado %s", pedido_id)
+
+    @transaction.atomic
+    def _on_orden_compra_recibida_costo(self, data: dict):
+        """
+        Cuando se recibe una OrdenCompra, actualiza el costo_unitario
+        en RecetaPlato para cada ingrediente recibido.
+
+        Por qué: el precio pagado al proveedor en esta orden es el
+        costo más actualizado del ingrediente. Permite calcular el
+        margen real de ganancia por plato.
+
+        Después de actualizar, publica costo_plato.actualizado
+        por cada plato afectado para que analytics_service lo consuma.
+        """
+        from app.inventory.models import RecetaPlato
+        from app.inventory.services.rabbitmq import publish_event
+        from app.inventory.events.event_types import InventoryEvents
+        from django.utils import timezone
+        from django.db.models import Sum, F, ExpressionWrapper, DecimalField
+
+        detalles = data.get("detalles", [])
+        if not detalles:
+            return
+
+        # platos afectados para publicar su nuevo costo
+        platos_afectados = set()
+
+        for detalle in detalles:
+            ingrediente_id = detalle.get("ingrediente_id")
+            precio_unitario = detalle.get("precio_unitario")
+
+            if not ingrediente_id or not precio_unitario:
+                continue
+
+            # Actualizar costo_unitario en todas las RecetaPlato
+            # que usen este ingrediente
+            actualizados = RecetaPlato.objects.filter(
+                ingrediente_id=ingrediente_id
+            ).update(
+                costo_unitario=precio_unitario,
+                fecha_costo_actualizado=timezone.now(),
+            )
+
+            if actualizados > 0:
+                # Marcar platos afectados
+                platos = RecetaPlato.objects.filter(
+                    ingrediente_id=ingrediente_id
+                ).values_list("plato_id", flat=True).distinct()
+                platos_afectados.update(platos)
+
+            logger.info(
+                "[inventory] costo_unitario actualizado para ingrediente %s → %s (%d recetas)",
+                ingrediente_id, precio_unitario, actualizados
+            )
+
+        # Publicar costo_plato.actualizado por cada plato afectado
+        for plato_id in platos_afectados:
+            recetas = RecetaPlato.objects.filter(plato_id=plato_id)
+
+            ingredientes_data = []
+            costo_total = 0
+
+            for receta in recetas:
+                costo_ing = receta.costo_ingrediente
+                costo_total += costo_ing
+                ingredientes_data.append({
+                    "ingrediente_id":    str(receta.ingrediente_id),
+                    "nombre":            receta.nombre_ingrediente,
+                    "cantidad":          str(receta.cantidad),
+                    "unidad_medida":     receta.unidad_medida,
+                    "costo_unitario":    str(receta.costo_unitario),
+                    "costo_ingrediente": str(round(costo_ing, 4)),
+                })
+
+            publish_event(InventoryEvents.COSTO_PLATO_ACTUALIZADO, {
+                "plato_id":           str(plato_id),
+                "costo_total":        str(round(costo_total, 4)),
+                "ingredientes":       ingredientes_data,
+                "fecha_actualizacion": timezone.now().isoformat(),
+            })
+
+            logger.info(
+                "[inventory] costo_plato.actualizado publicado: plato %s → costo %s",
+                plato_id, round(costo_total, 4)
+            )
