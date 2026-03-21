@@ -85,17 +85,36 @@ class AlmacenAdmin(admin.ModelAdmin):
 
 @admin.register(RecetaPlato)
 class RecetaPlatoAdmin(admin.ModelAdmin):
-    list_display = ("plato_id", "nombre_ingrediente", "cantidad",
-                    "unidad_medida", "fecha_actualizacion")
+    list_display = (
+        "plato_id", "nombre_ingrediente",
+        "cantidad", "unidad_medida",
+        "costo_unitario", "costo_ingrediente_display",
+        "fecha_costo_actualizado",
+    )
     search_fields = ("nombre_ingrediente", "plato_id", "ingrediente_id")
     ordering = ("plato_id", "nombre_ingrediente")
-    readonly_fields = ("id", "fecha_actualizacion")
+    readonly_fields = (
+        "id", "plato_id", "ingrediente_id",
+        "nombre_ingrediente", "cantidad", "unidad_medida",
+        "costo_unitario", "costo_ingrediente_display",
+        "fecha_actualizacion", "fecha_costo_actualizado",
+    )
+
+    @admin.display(description="Costo ingrediente")
+    def costo_ingrediente_display(self, obj):
+        costo = obj.costo_ingrediente
+        if costo == 0:
+            return format_html('<span style="color:#BA7517">Sin costo</span>')
+        return format_html('<span style="color:#0F6E56">{}</span>', round(costo, 4))
 
     def has_add_permission(self, request):
-        return False     # se gestiona exclusivamente por eventos RabbitMQ
+        return False
 
     def has_delete_permission(self, request, obj=None):
-        return False     # se gestiona exclusivamente por eventos RabbitMQ
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 # ─────────────────────────────────────────

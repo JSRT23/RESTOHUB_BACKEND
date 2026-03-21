@@ -138,28 +138,36 @@ class Almacen(models.Model):
 class RecetaPlato(models.Model):
     """
     Copia local de PlatoIngrediente de menu_service.
-    Se mantiene sincronizada mediante eventos RabbitMQ:
-      - plato_ingrediente.added       → crear RecetaPlato
-      - plato_ingrediente.removed     → eliminar RecetaPlato
-      - plato_ingrediente.cantidad_updated → actualizar cantidad
+    Se mantiene sincronizada mediante eventos RabbitMQ.
 
-    Por qué existe: cuando order_service publica pedido.confirmado,
-    inventory_service necesita saber qué ingredientes descontar sin
-    tener que llamar a menu_service por HTTP. Autonomía total.
+    costo_unitario — precio pagado al proveedor por unidad del ingrediente.
+    Se actualiza automáticamente al recibir una OrdenCompra con ese ingrediente.
+    Permite calcular el costo real de cada plato para análisis de márgenes.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # Referencias externas a menu_service
     plato_id = models.UUIDField()
     ingrediente_id = models.UUIDField()
 
-    # Snapshot de datos de menu_service para autonomía
     nombre_ingrediente = models.CharField(max_length=255)
     cantidad = models.DecimalField(max_digits=10, decimal_places=3)
     unidad_medida = models.CharField(
         max_length=10, choices=UnidadMedida.choices)
 
+    # Costo más reciente del ingrediente — actualizado al recibir OrdenCompra
+    costo_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0,
+        help_text="Precio pagado al proveedor por unidad. Se actualiza al recibir una orden de compra."
+    )
+
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    fecha_costo_actualizado = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Última vez que se actualizó el costo desde una orden de compra."
+    )
 
     class Meta:
         verbose_name = "Receta de Plato"
@@ -171,13 +179,21 @@ class RecetaPlato(models.Model):
             )
         ]
 
+    @property
+    def costo_ingrediente(self) -> float:
+        """
+        Costo de este ingrediente dentro del plato.
+        costo_ingrediente = cantidad × costo_unitario
+        """
+        return float(self.cantidad * self.costo_unitario)
+
     def __str__(self):
         return f"Plato {self.plato_id} — {self.nombre_ingrediente} ({self.cantidad} {self.unidad_medida})"
-
 
 # ─────────────────────────────────────────
 # INGREDIENTE INVENTARIO
 # ─────────────────────────────────────────
+
 
 class IngredienteInventario(models.Model):
     """

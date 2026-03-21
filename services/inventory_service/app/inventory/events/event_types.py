@@ -96,3 +96,19 @@ class InventoryEvents:
 
     ORDEN_COMPRA_CANCELADA = "app.inventory.orden_compra.cancelada"
     # data: { orden_id, proveedor_id, restaurante_id }
+
+    # ── Costos ──
+    COSTO_PLATO_ACTUALIZADO = "app.inventory.costo_plato.actualizado"
+    # data: {
+    #   plato_id,
+    #   costo_total,          ← suma de todos los ingredientes
+    #   moneda,               ← moneda del proveedor
+    #   ingredientes: [
+    #     { ingrediente_id, nombre, cantidad, unidad_medida,
+    #       costo_unitario, costo_ingrediente }
+    #   ],
+    #   fecha_actualizacion
+    # }
+    # Consumidores futuros:
+    #   - analytics_service → margen de ganancia = precio_venta - costo_total
+    #   - menu_service → mostrar costo en dashboard administrativo
