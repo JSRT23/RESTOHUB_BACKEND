@@ -6,14 +6,18 @@ from .services.order.queries import OrderQuery
 from .services.order.mutations import OrderMutation
 from .services.inventory.queries import InventoryQuery
 from .services.inventory.mutations import InventoryMutation
+from .services.staff.queries import StaffQuery
+from .services.staff.mutations import StaffMutation
+from .services.loyalty.queries import LoyaltyQuery
+from .services.loyalty.mutations import LoyaltyMutation
 
 
 class Query(
     MenuQuery,
     OrderQuery,
     InventoryQuery,
-    # StaffQuery,    ← agregar cuando esté listo
-    # LoyaltyQuery,  ← agregar cuando esté listo
+    StaffQuery,
+    LoyaltyQuery,
     graphene.ObjectType,
 ):
     pass
@@ -23,8 +27,8 @@ class Mutation(
     MenuMutation,
     OrderMutation,
     InventoryMutation,
-    # StaffMutation,    ← agregar cuando esté listo
-    # LoyaltyMutation,  ← agregar cuando esté listo
+    StaffMutation,
+    LoyaltyMutation,
     graphene.ObjectType,
 ):
     pass

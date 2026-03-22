@@ -1,47 +1,56 @@
 import logging
-from django.db.models.signals import post_save, post_delete
+
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import Plato, PrecioPlato, Restaurante, Categoria, Ingrediente, PlatoIngrediente
-from .events.event_types import MenuEvents
-from .services.rabbitmq import publish_event
+from app.menu.events.event_types import MenuEvents
+from app.menu.models import (
+    Categoria,
+    Ingrediente,
+    Plato,
+    PlatoIngrediente,
+    PrecioPlato,
+    Restaurante,
+)
+from app.menu.services.rabbitmq import publish_event
 
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # Helper
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 def _sid(value):
     """UUID / cualquier valor a string seguro. None → None."""
     return str(value) if value is not None else None
 
 
-# ─────────────────────────────────────────
-# PLATO
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Plato
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=Plato)
 def plato_saved(sender, instance, created, update_fields, **kwargs):
     # Activated / Deactivated — save(update_fields=["activo"])
     if not created and update_fields and set(update_fields) == {"activo"}:
-        event = MenuEvents.PLATO_ACTIVATED if instance.activo else MenuEvents.PLATO_DEACTIVATED
+        event = (
+            MenuEvents.PLATO_ACTIVATED
+            if instance.activo
+            else MenuEvents.PLATO_DEACTIVATED
+        )
         publish_event(event, {"plato_id": _sid(instance.id)})
         return
 
     event = MenuEvents.PLATO_CREATED if created else MenuEvents.PLATO_UPDATED
 
     publish_event(event, {
-        "plato_id":            _sid(instance.id),
-        "nombre":              instance.nombre,
-        "descripcion":         instance.descripcion,
-        # None si no tiene categoría
-        "categoria_id":        _sid(instance.categoria_id),
-        "imagen":              instance.imagen,
-        "activo":              instance.activo,
-        "fecha_creacion":      instance.fecha_creacion.isoformat() if instance.fecha_creacion else None,
-        "fecha_actualizacion": instance.fecha_actualizacion.isoformat() if instance.fecha_actualizacion else None,
+        "plato_id":    _sid(instance.id),
+        "nombre":      instance.nombre,
+        "descripcion": instance.descripcion,
+        "categoria_id": _sid(instance.categoria_id),
+        "imagen":      instance.imagen,
+        "activo":      instance.activo,
     })
 
 
@@ -52,21 +61,27 @@ def plato_deleted(sender, instance, **kwargs):
     })
 
 
-# ─────────────────────────────────────────
-# PRECIO PLATO
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# PrecioPlato
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=PrecioPlato)
 def precio_saved(sender, instance, created, update_fields, **kwargs):
     # Activated / Deactivated — save(update_fields=["activo"])
     if not created and update_fields and set(update_fields) == {"activo"}:
-        event = MenuEvents.PRECIO_ACTIVATED if instance.activo else MenuEvents.PRECIO_DEACTIVATED
+        event = (
+            MenuEvents.PRECIO_ACTIVATED
+            if instance.activo
+            else MenuEvents.PRECIO_DEACTIVATED
+        )
         publish_event(event, {
             "precio_id":      _sid(instance.id),
             "plato_id":       _sid(instance.plato_id),
             "restaurante_id": _sid(instance.restaurante_id),
+            # Incluir precio y moneda para que order/loyalty no necesiten
+            # hacer un GET adicional al recibir el evento
             "precio":         str(instance.precio),
-            "moneda":         instance.restaurante.moneda,
+            "moneda":         instance.moneda,
         })
         return
 
@@ -76,26 +91,40 @@ def precio_saved(sender, instance, created, update_fields, **kwargs):
         "precio_id":      _sid(instance.id),
         "plato_id":       _sid(instance.plato_id),
         "restaurante_id": _sid(instance.restaurante_id),
-        # Decimal → str evita pérdida de precisión
         "precio":         str(instance.precio),
-        "moneda":         instance.restaurante.moneda,
+        "moneda":         instance.moneda,
         "fecha_inicio":   instance.fecha_inicio.isoformat(),
         "fecha_fin":      instance.fecha_fin.isoformat() if instance.fecha_fin else None,
         "activo":         instance.activo,
     })
 
 
-# ─────────────────────────────────────────
-# RESTAURANTE
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Restaurante
+# FIX: el original solo cubría deactivated en el bloque update_fields.
+# Un restaurante puede reactivarse (activo=True) — ese caso también
+# debe publicar RESTAURANTE_UPDATED para que los consumidores se sincronicen.
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=Restaurante)
 def restaurante_saved(sender, instance, created, update_fields, **kwargs):
-    # Deactivated — save(update_fields=["activo"])
-    if not created and update_fields and set(update_fields) == {"activo"} and not instance.activo:
-        publish_event(MenuEvents.RESTAURANTE_DEACTIVATED, {
-            "restaurante_id": _sid(instance.id),
-        })
+    # Deactivated — save(update_fields=["activo"]) con activo=False
+    if not created and update_fields and set(update_fields) == {"activo"}:
+        if not instance.activo:
+            publish_event(MenuEvents.RESTAURANTE_DEACTIVATED, {
+                "restaurante_id": _sid(instance.id),
+            })
+        else:
+            # Reactivación — notificar como updated para que los servicios
+            # que lo marcaron inactivo (ej: staff) lo vuelvan a activar
+            publish_event(MenuEvents.RESTAURANTE_UPDATED, {
+                "restaurante_id": _sid(instance.id),
+                "nombre":         instance.nombre,
+                "pais":           instance.pais,
+                "ciudad":         instance.ciudad,
+                "moneda":         instance.moneda,
+                "activo":         instance.activo,
+            })
         return
 
     event = MenuEvents.RESTAURANTE_CREATED if created else MenuEvents.RESTAURANTE_UPDATED
@@ -111,17 +140,20 @@ def restaurante_saved(sender, instance, created, update_fields, **kwargs):
     })
 
 
-# ─────────────────────────────────────────
-# CATEGORIA
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Categoria
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=Categoria)
 def categoria_saved(sender, instance, created, update_fields, **kwargs):
-    if not created and update_fields and set(update_fields) == {"activo"} and not instance.activo:
-        publish_event(MenuEvents.CATEGORIA_DEACTIVATED, {
-            "categoria_id": _sid(instance.id),
-        })
-        return
+    if not created and update_fields and set(update_fields) == {"activo"}:
+        if not instance.activo:
+            publish_event(MenuEvents.CATEGORIA_DEACTIVATED, {
+                "categoria_id": _sid(instance.id),
+            })
+            return
+        # Si se reactiva la categoría → publicar como updated
+        # loyalty_service puede reactivar promos asociadas
 
     event = MenuEvents.CATEGORIA_CREATED if created else MenuEvents.CATEGORIA_UPDATED
 
@@ -133,17 +165,18 @@ def categoria_saved(sender, instance, created, update_fields, **kwargs):
     })
 
 
-# ─────────────────────────────────────────
-# INGREDIENTE
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Ingrediente
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=Ingrediente)
 def ingrediente_saved(sender, instance, created, update_fields, **kwargs):
-    if not created and update_fields and set(update_fields) == {"activo"} and not instance.activo:
-        publish_event(MenuEvents.INGREDIENTE_DEACTIVATED, {
-            "ingrediente_id": _sid(instance.id),
-        })
-        return
+    if not created and update_fields and set(update_fields) == {"activo"}:
+        if not instance.activo:
+            publish_event(MenuEvents.INGREDIENTE_DEACTIVATED, {
+                "ingrediente_id": _sid(instance.id),
+            })
+            return
 
     event = MenuEvents.INGREDIENTE_CREATED if created else MenuEvents.INGREDIENTE_UPDATED
 
@@ -155,9 +188,9 @@ def ingrediente_saved(sender, instance, created, update_fields, **kwargs):
     })
 
 
-# ─────────────────────────────────────────
-# PLATO INGREDIENTE
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# PlatoIngrediente
+# ---------------------------------------------------------------------------
 
 @receiver(post_save, sender=PlatoIngrediente)
 def plato_ingrediente_saved(sender, instance, created, **kwargs):
@@ -169,7 +202,7 @@ def plato_ingrediente_saved(sender, instance, created, **kwargs):
             "unidad_medida":  instance.ingrediente.unidad_medida,
         })
     else:
-        # unique_together garantiza que plato e ingrediente no cambian,
+        # unique_together garantiza que plato e ingrediente no cambian —
         # el único campo editable es cantidad
         publish_event(MenuEvents.PLATO_INGREDIENTE_CANTIDAD_UPDATED, {
             "plato_id":       _sid(instance.plato_id),

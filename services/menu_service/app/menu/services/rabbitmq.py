@@ -1,93 +1,104 @@
 import json
-import uuid
 import logging
 import os
+import uuid
+from datetime import datetime, timezone
+
 import pika
 import pika.exceptions
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────
-# Config desde variables de entorno
-# ─────────────────────────────────────────
-RABBIT_HOST = os.getenv("RABBITMQ_HOST",     "rabbitmq")
-RABBIT_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
-RABBIT_USER = os.getenv("RABBITMQ_USER",     "guest")
-RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
-RABBIT_VHOST = os.getenv("RABBITMQ_VHOST",    "/")
 EXCHANGE_NAME = os.getenv("RABBITMQ_EXCHANGE", "restohub")
 
-
-# ─────────────────────────────────────────
-# Conexión persistente (singleton)
-# ─────────────────────────────────────────
 _connection = None
 _channel = None
+
+
+# ---------------------------------------------------------------------------
+# Gestión de conexión
+# ---------------------------------------------------------------------------
+
+def _is_connected() -> bool:
+    """Verifica si la conexión y canal están activos sin lanzar excepción."""
+    try:
+        return (
+            _connection is not None and _connection.is_open
+            and _channel is not None and _channel.is_open
+        )
+    except Exception:
+        return False
+
+
+def _connect() -> None:
+    """
+    Abre conexión y canal. Declara el exchange topic durable.
+    Llamado internamente por _get_channel() — nunca directamente.
+    """
+    global _connection, _channel
+
+    from django.conf import settings
+    cfg = settings.RABBITMQ
+
+    credentials = pika.PlainCredentials(cfg["USER"], cfg["PASSWORD"])
+    params = pika.ConnectionParameters(
+        host=cfg["HOST"],
+        port=cfg["PORT"],
+        virtual_host=cfg["VHOST"],
+        credentials=credentials,
+        heartbeat=120,              # staff también usa 120
+        connection_attempts=3,      # reintentos automáticos al conectar
+        retry_delay=2,              # segundos entre intentos
+        blocked_connection_timeout=30,
+    )
+    _connection = pika.BlockingConnection(params)
+    _channel = _connection.channel()
+    _channel.exchange_declare(
+        exchange=EXCHANGE_NAME,
+        exchange_type="topic",
+        durable=True,
+    )
+    logger.info("[menu_rabbitmq] Conectado al exchange '%s'", EXCHANGE_NAME)
 
 
 def _get_channel():
     """
     Retorna el canal activo. Si la conexión está caída la reconecta.
-    Usa una sola conexión reutilizable en lugar de abrir/cerrar
-    en cada evento (mucho más eficiente).
+    Resetea _connection/_channel antes de reconectar para evitar
+    estados inconsistentes con el socket anterior.
     """
     global _connection, _channel
 
-    try:
-        if _connection is None or _connection.is_closed:
-            credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASSWORD)
-            params = pika.ConnectionParameters(
-                host=RABBIT_HOST,
-                port=RABBIT_PORT,
-                virtual_host=RABBIT_VHOST,
-                credentials=credentials,
-                heartbeat=60,
-                blocked_connection_timeout=30,
-            )
-            _connection = pika.BlockingConnection(params)
-            logger.info("[RabbitMQ] Conexión establecida con %s", RABBIT_HOST)
-
-        if _channel is None or _channel.is_closed:
-            _channel = _connection.channel()
-            # Exchange topic: permite rutas como app.menu.plato.*
-            # Varios servicios pueden suscribirse con sus propias queues
-            _channel.exchange_declare(
-                exchange=EXCHANGE_NAME,
-                exchange_type="topic",
-                durable=True,
-            )
-            logger.info("[RabbitMQ] Canal listo — exchange '%s'",
-                        EXCHANGE_NAME)
-
-    except pika.exceptions.AMQPConnectionError as e:
-        logger.error("[RabbitMQ] No se pudo conectar: %s", e)
+    if not _is_connected():
+        logger.warning("[menu_rabbitmq] Canal no disponible — reconectando...")
+        try:
+            if _connection and not _connection.is_closed:
+                _connection.close()
+        except Exception:
+            pass
         _connection = None
         _channel = None
-        raise
+        _connect()
 
     return _channel
 
 
-# ─────────────────────────────────────────
-# Payload estándar
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Construcción del mensaje
+# ---------------------------------------------------------------------------
+
 def _build_message(event_type: str, data: dict) -> dict:
     """
-    Estructura estándar para todos los eventos de menu_service.
+    Estructura estándar de todos los eventos de menu_service.
 
     {
-        "event_id":       "uuid4",
-        "event_type":     "app.menu.plato.created",
-        "timestamp":      "2025-01-01T12:00:00+00:00",
-        "service_origin": "menu_service",
-        "version":        "1.0",
-        "data": { ... payload específico ... }
+        "event_id":       UUID único por evento (idempotencia en consumidores)
+        "event_type":     routing key exacta  (ej: "app.menu.plato.created")
+        "timestamp":      ISO 8601 UTC
+        "service_origin": "menu_service"
+        "version":        "1.0"
+        "data":           payload específico del evento
     }
-
-    - event_id: UUID único por evento, permite idempotencia en consumidores.
-    - service_origin: identifica de qué servicio viene sin ambigüedad.
-    - version: facilita migraciones futuras del schema del evento.
     """
     return {
         "event_id":       str(uuid.uuid4()),
@@ -99,51 +110,43 @@ def _build_message(event_type: str, data: dict) -> dict:
     }
 
 
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # Publicación
-# ─────────────────────────────────────────
-def publish_event(event_type: str, data: dict) -> bool:
-    """
-    Publica un evento en el exchange topic de RabbitMQ.
+# Nunca lanza excepción — el save() del modelo nunca se interrumpe.
+# Si RabbitMQ no está disponible el evento se pierde pero la operación
+# de negocio se completa. En producción usar outbox pattern para garantía.
+# ---------------------------------------------------------------------------
 
-    El routing_key ES el event_type (ej: "app.menu.plato.created"),
-    lo que permite a los consumidores suscribirse con wildcards:
-        - "app.menu.plato.*"  → solo eventos de plato
-        - "app.menu.#"        → todos los eventos de menu_service
-        - "app.#"             → todos los eventos de la plataforma
-
-    Si RabbitMQ no está disponible, loguea el error y retorna False
-    sin lanzar excepción — el save() del modelo no se interrumpe.
-    """
+def publish_event(event_type: str, data: dict) -> None:
     message = _build_message(event_type, data)
+    body = json.dumps(message, default=str)
 
     try:
         channel = _get_channel()
         channel.basic_publish(
             exchange=EXCHANGE_NAME,
-            routing_key=event_type,
-            body=json.dumps(message, default=str),
+            routing_key=event_type,        # consumidores filtran con wildcards
+            body=body,
             properties=pika.BasicProperties(
+                delivery_mode=2,           # persistente: sobrevive restart del broker
                 content_type="application/json",
-                delivery_mode=2,        # persistente: sobrevive restart del broker
             ),
         )
-        logger.info(
-            "[RabbitMQ] ✓ %s | event_id: %s",
-            event_type,
-            message["event_id"],
+        logger.debug(
+            "[menu_rabbitmq] Publicado '%s' | event_id: %s",
+            event_type, message["event_id"],
         )
-        return True
 
-    except pika.exceptions.AMQPConnectionError as e:
+    except pika.exceptions.AMQPConnectionError as exc:
         logger.error(
-            "[RabbitMQ] ✗ Conexión caída al publicar '%s': %s", event_type, e)
+            "[menu_rabbitmq] Conexión caída al publicar '%s': %s", event_type, exc
+        )
+        # Resetear para forzar reconexión en el próximo evento
         global _connection, _channel
         _connection = None
         _channel = None
-        return False
 
-    except Exception as e:
+    except Exception as exc:
         logger.error(
-            "[RabbitMQ] ✗ Error inesperado al publicar '%s': %s", event_type, e)
-        return False
+            "[menu_rabbitmq] Error inesperado al publicar '%s': %s", event_type, exc
+        )

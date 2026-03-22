@@ -57,14 +57,30 @@ QUEUES = {
 }
 
 
+QUEUES_CONSUMIDORES = {
+    # Queues que staff publica para otros servicios
+    "staff.audit": [
+        "app.staff.#",
+    ],
+}
+
+
 class Command(BaseCommand):
-    help = "Consume eventos RabbitMQ relevantes para staff_service"
+    help = "Declara queues de staff_service y consume eventos de menu, order e inventory."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--solo-declarar",
+            action="store_true",
+            default=False,
+            help="Solo declara queues y bindings, luego termina.",
+        )
 
     def handle(self, *args, **options):
         from django.conf import settings
         cfg = settings.RABBITMQ
 
-        self.stdout.write("[staff_consumer] Iniciando...")
+        self.stdout.write("[staff_consumer] Conectando a RabbitMQ...")
 
         credentials = pika.PlainCredentials(cfg["USER"], cfg["PASSWORD"])
         params = pika.ConnectionParameters(
@@ -76,17 +92,35 @@ class Command(BaseCommand):
             blocked_connection_timeout=30,
         )
 
-        connection = pika.BlockingConnection(params)
+        # Retry loop — RabbitMQ puede tardar unos segundos en estar
+        # completamente listo después de pasar el healthcheck
+        import time
+        max_retries = 10
+        for intento in range(1, max_retries + 1):
+            try:
+                connection = pika.BlockingConnection(params)
+                self.stdout.write(
+                    f"[staff_consumer] Conectado (intento {intento})")
+                break
+            except Exception as exc:
+                if intento == max_retries:
+                    self.stderr.write(
+                        f"[staff_consumer] No se pudo conectar tras {max_retries} intentos: {exc}")
+                    raise
+                self.stdout.write(
+                    f"[staff_consumer] RabbitMQ no disponible, reintentando en 5s ({intento}/{max_retries})...")
+                time.sleep(5)
+
         channel = connection.channel()
 
-        # Declarar exchange
         channel.exchange_declare(
             exchange=EXCHANGE_NAME,
             exchange_type="topic",
             durable=True,
         )
 
-        # Declarar queues y bindings
+        # — Queues propias (staff consume) —
+        self.stdout.write("\n  -- Queues propias (staff_service consume):")
         for queue_name, routing_keys in QUEUES.items():
             channel.queue_declare(queue=queue_name, durable=True)
             for routing_key in routing_keys:
@@ -96,14 +130,42 @@ class Command(BaseCommand):
                     routing_key=routing_key,
                 )
             self.stdout.write(
-                f"[staff_consumer] Queue '{queue_name}' lista "
-                f"({len(routing_keys)} bindings)"
+                f"    [OK] '{queue_name}' -- {len(routing_keys)} binding(s)"
             )
 
-        # Un mensaje a la vez por consumer
+        # — Queues de auditoría —
+        self.stdout.write("\n  -- Queues de auditoría:")
+        for queue_name, routing_keys in QUEUES_CONSUMIDORES.items():
+            channel.queue_declare(queue=queue_name, durable=True)
+            for routing_key in routing_keys:
+                channel.queue_bind(
+                    exchange=EXCHANGE_NAME,
+                    queue=queue_name,
+                    routing_key=routing_key,
+                )
+            self.stdout.write(
+                f"    [OK] '{queue_name}' -- {len(routing_keys)} binding(s)"
+            )
+
+        total_q = len(QUEUES) + len(QUEUES_CONSUMIDORES)
+        total_b = sum(len(v)
+                      for v in {**QUEUES, **QUEUES_CONSUMIDORES}.values())
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"\n[staff_consumer] {total_q} queues declaradas, "
+                f"{total_b} bindings registrados."
+            )
+        )
+
+        if options["solo_declarar"]:
+            connection.close()
+            self.stdout.write(
+                "[staff_consumer] Modo --solo-declarar. Finalizado.")
+            return
+
+        # — Modo escucha —
         channel.basic_qos(prefetch_count=1)
 
-        # Registrar el mismo callback para todas las queues
         for queue_name in QUEUES:
             channel.basic_consume(
                 queue=queue_name,
@@ -111,14 +173,14 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(
-            "[staff_consumer] Esperando mensajes. Ctrl+C para detener.")
+            "\n[staff_consumer] Esperando mensajes. Ctrl+C para detener.")
         try:
             channel.start_consuming()
         except KeyboardInterrupt:
             channel.stop_consuming()
         finally:
             connection.close()
-            self.stdout.write("[staff_consumer] Conexión cerrada.")
+            self.stdout.write("\n[staff_consumer] Conexion cerrada.")
 
     # ---------------------------------------------------------------------------
     # Callback principal
