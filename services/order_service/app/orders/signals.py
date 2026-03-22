@@ -1,203 +1,232 @@
 import logging
-from django.db.models.signals import post_save, post_delete
+
+from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from .models import Pedido, DetallePedido, ComandaCocina, SeguimientoPedido, EntregaPedido
-from .events.event_types import OrderEvents
-from .services.rabbitmq import publish_event
+from app.orders.events.event_types import OrderEvents
+from app.orders.services.rabbitmq import publish_event
 
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────
-# Helper
-# ─────────────────────────────────────────
-
 def _sid(value):
-    """UUID / Decimal / cualquier valor a string seguro. None → None."""
     return str(value) if value is not None else None
 
 
-def _detalles(pedido):
-    """
-    Serializa los detalles del pedido para incluirlos en el payload.
-    Snapshot completo: plato_id, nombre, precio, cantidad, subtotal.
-    inventory_service usa esto para descontar stock por ingrediente.
-    """
-    return [
-        {
-            "detalle_id":     _sid(d.id),
-            "plato_id":       _sid(d.plato_id),
-            "nombre_plato":   d.nombre_plato,
-            "precio_unitario": str(d.precio_unitario),
-            "cantidad":       d.cantidad,
-            "subtotal":       str(d.subtotal),
-            "notas":          d.notas,
-        }
-        for d in pedido.detalles.all()
-    ]
+# ---------------------------------------------------------------------------
+# Pedido
+# Los imports del modelo van dentro del receiver para evitar
+# ImportError si el modelo no existe o cambia de nombre.
+# ---------------------------------------------------------------------------
+
+def connect_pedido_signal():
+    try:
+        from app.orders.models import Pedido
+
+        @receiver(post_save, sender=Pedido)
+        def pedido_saved(sender, instance, created, update_fields, **kwargs):
+
+            if created:
+                try:
+                    detalles = [
+                        {
+                            "detalle_id":      _sid(d.id),
+                            "plato_id":        _sid(d.plato_id),
+                            "nombre_plato":    getattr(d, "nombre_plato", ""),
+                            "cantidad":        d.cantidad,
+                            "precio_unitario": str(d.precio_unitario),
+                            "subtotal":        str(d.subtotal),
+                        }
+                        for d in instance.detalles.all()
+                    ]
+                except Exception:
+                    detalles = []
+
+                publish_event(OrderEvents.PEDIDO_CREADO, {
+                    "pedido_id":      _sid(instance.id),
+                    "restaurante_id": _sid(instance.restaurante_id),
+                    "cliente_id":     _sid(getattr(instance, "cliente_id", None)),
+                    "canal":          getattr(instance, "canal", ""),
+                    "estado":         instance.estado,
+                    "total":          str(instance.total),
+                    "moneda":         getattr(instance, "moneda", ""),
+                    "detalles":       detalles,
+                })
+                return
+
+            if not update_fields or "estado" not in update_fields:
+                return
+
+            estado = instance.estado
+
+            if estado in ("EN_PREPARACION", "CONFIRMADO"):
+                try:
+                    detalles = [
+                        {
+                            "detalle_id":   _sid(d.id),
+                            "plato_id":     _sid(d.plato_id),
+                            "nombre_plato": getattr(d, "nombre_plato", ""),
+                            "cantidad":     d.cantidad,
+                            "precio_unitario": str(d.precio_unitario),
+                            "subtotal":     str(d.subtotal),
+                        }
+                        for d in instance.detalles.all()
+                    ]
+                except Exception:
+                    detalles = []
+
+                publish_event(OrderEvents.PEDIDO_CONFIRMADO, {
+                    "pedido_id":      _sid(instance.id),
+                    "restaurante_id": _sid(instance.restaurante_id),
+                    "cliente_id":     _sid(getattr(instance, "cliente_id", None)),
+                    "total":          str(instance.total),
+                    "moneda":         getattr(instance, "moneda", ""),
+                    "detalles":       detalles,
+                })
+
+            elif estado == "CANCELADO":
+                publish_event(OrderEvents.PEDIDO_CANCELADO, {
+                    "pedido_id":      _sid(instance.id),
+                    "restaurante_id": _sid(instance.restaurante_id),
+                    "cliente_id":     _sid(getattr(instance, "cliente_id", None)),
+                    "motivo":         getattr(instance, "motivo_cancelacion", ""),
+                    "total":          str(instance.total),
+                    "moneda":         getattr(instance, "moneda", ""),
+                })
+
+            elif estado == "ENTREGADO":
+                publish_event(OrderEvents.PEDIDO_ENTREGADO, {
+                    "pedido_id":         _sid(instance.id),
+                    "restaurante_id":    _sid(instance.restaurante_id),
+                    "cliente_id":        _sid(getattr(instance, "cliente_id", None)),
+                    "total":             str(instance.total),
+                    "moneda":            getattr(instance, "moneda", ""),
+                    "fecha_entrega_real": (
+                        instance.fecha_entrega_real.isoformat()
+                        if getattr(instance, "fecha_entrega_real", None) else None
+                    ),
+                })
+
+            else:
+                publish_event(OrderEvents.PEDIDO_ESTADO_ACTUALIZADO, {
+                    "pedido_id":    _sid(instance.id),
+                    "estado_nuevo": estado,
+                    "timestamp":    (
+                        instance.updated_at.isoformat()
+                        if hasattr(instance, "updated_at") else None
+                    ),
+                })
+
+    except ImportError:
+        logger.warning(
+            "[order_signals] Modelo Pedido no encontrado — signal no conectado.")
 
 
-# ─────────────────────────────────────────
-# PEDIDO
-# El signal detecta el estado para disparar el evento correcto:
-#   RECIBIDO    → PEDIDO_CREADO
-#   CONFIRMADO  → PEDIDO_CONFIRMADO  (si tu flujo lo tiene)
-#   CANCELADO   → PEDIDO_CANCELADO
-#   ENTREGADO   → PEDIDO_ENTREGADO
-#   cualquier   → PEDIDO_ESTADO_ACTUALIZADO (siempre, para tracking)
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Comanda — solo se conecta si el modelo existe
+# ---------------------------------------------------------------------------
 
-@receiver(post_save, sender=Pedido)
-def pedido_saved(sender, instance, created, update_fields, **kwargs):
+def connect_comanda_signal():
+    try:
+        from app.orders.models import Comanda
 
-    if created:
-        # Al crear el pedido los detalles aún no existen (se crean después).
-        # Publicamos el pedido sin detalles — DetallePedido tiene su propio signal.
-        publish_event(OrderEvents.PEDIDO_CREADO, {
-            "pedido_id":              _sid(instance.id),
-            "restaurante_id":         _sid(instance.restaurante_id),
-            "cliente_id":             _sid(instance.cliente_id),
-            "canal":                  instance.canal,
-            "estado":                 instance.estado,
-            "prioridad":              instance.prioridad,
-            "total":                  str(instance.total),
-            "moneda":                 instance.moneda,
-            "mesa_id":                _sid(instance.mesa_id),
-            "fecha_creacion":         instance.fecha_creacion.isoformat() if instance.fecha_creacion else None,
-            "fecha_entrega_estimada": instance.fecha_entrega_estimada.isoformat() if instance.fecha_entrega_estimada else None,
-        })
-        return
+        @receiver(post_save, sender=Comanda)
+        def comanda_saved(sender, instance, created, update_fields, **kwargs):
+            if created:
+                publish_event(OrderEvents.COMANDA_CREADA, {
+                    "comanda_id":     _sid(instance.id),
+                    "pedido_id":      _sid(instance.pedido_id),
+                    "restaurante_id": _sid(instance.pedido.restaurante_id),
+                    "estacion":       getattr(instance, "estacion", ""),
+                    "estado":         getattr(instance, "estado", ""),
+                    "hora_envio":     (
+                        instance.hora_envio.isoformat()
+                        if getattr(instance, "hora_envio", None) else None
+                    ),
+                })
+                return
 
-    # Cambio de estado — siempre publicar estado_actualizado para tracking
-    if update_fields and "estado" in update_fields:
-        publish_event(OrderEvents.PEDIDO_ESTADO_ACTUALIZADO, {
-            "pedido_id":    _sid(instance.id),
-            "estado_nuevo": instance.estado,
-            "timestamp":    instance.fecha_creacion.isoformat() if instance.fecha_creacion else None,
-        })
+            if update_fields and "estado" in update_fields:
+                estado = getattr(instance, "estado", "")
+                if estado == "LISTA":
+                    tiempo = None
+                    if getattr(instance, "hora_envio", None) and getattr(instance, "hora_fin", None):
+                        tiempo = int(
+                            (instance.hora_fin - instance.hora_envio).total_seconds())
+                    publish_event(OrderEvents.COMANDA_LISTA, {
+                        "comanda_id":                  _sid(instance.id),
+                        "pedido_id":                   _sid(instance.pedido_id),
+                        "restaurante_id":              _sid(instance.pedido.restaurante_id),
+                        "estacion":                    getattr(instance, "estacion", ""),
+                        "hora_envio":                  (
+                            instance.hora_envio.isoformat()
+                            if getattr(instance, "hora_envio", None) else None
+                        ),
+                        "hora_fin":                    (
+                            instance.hora_fin.isoformat()
+                            if getattr(instance, "hora_fin", None) else None
+                        ),
+                        "tiempo_preparacion_segundos": tiempo,
+                    })
 
-        # Eventos semánticos por estado final
-        if instance.estado == "CANCELADO":
-            publish_event(OrderEvents.PEDIDO_CANCELADO, {
-                "pedido_id":      _sid(instance.id),
-                "restaurante_id": _sid(instance.restaurante_id),
-                "cliente_id":     _sid(instance.cliente_id),
-                "total":          str(instance.total),
-                "moneda":         instance.moneda,
-            })
-
-        elif instance.estado == "ENTREGADO":
-            publish_event(OrderEvents.PEDIDO_ENTREGADO, {
-                "pedido_id":      _sid(instance.id),
-                "restaurante_id": _sid(instance.restaurante_id),
-                "cliente_id":     _sid(instance.cliente_id),
-                "total":          str(instance.total),
-                "moneda":         instance.moneda,
-            })
-
-        elif instance.estado == "EN_PREPARACION":
-            # EN_PREPARACION equivale a confirmado — inventory descuenta stock
-            publish_event(OrderEvents.PEDIDO_CONFIRMADO, {
-                "pedido_id":      _sid(instance.id),
-                "restaurante_id": _sid(instance.restaurante_id),
-                "cliente_id":     _sid(instance.cliente_id),
-                "total":          str(instance.total),
-                "moneda":         instance.moneda,
-                "detalles":       _detalles(instance),
-            })
+    except ImportError:
+        logger.warning(
+            "[order_signals] Modelo Comanda no encontrado — signal no conectado.")
 
 
-# ─────────────────────────────────────────
-# DETALLE PEDIDO
-# Se publica cuando se agregan ítems al pedido.
-# loyalty_service evalúa promociones por plato/categoría.
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Entrega — solo se conecta si el modelo existe
+# ---------------------------------------------------------------------------
 
-@receiver(post_save, sender=DetallePedido)
-def detalle_saved(sender, instance, created, **kwargs):
-    if not created:
-        return  # los detalles no se editan, solo se crean
+def connect_entrega_signal():
+    try:
+        from app.orders.models import Entrega
 
-    # Notificar que se agregó un ítem al pedido
-    # loyalty_service puede evaluar promo por plato en tiempo real
-    publish_event("app.order.detalle.agregado", {
-        "pedido_id":       _sid(instance.pedido_id),
-        "detalle_id":      _sid(instance.id),
-        "plato_id":        _sid(instance.plato_id),
-        "nombre_plato":    instance.nombre_plato,
-        "precio_unitario": str(instance.precio_unitario),
-        "cantidad":        instance.cantidad,
-        "subtotal":        str(instance.subtotal),
-    })
+        @receiver(post_save, sender=Entrega)
+        def entrega_saved(sender, instance, created, update_fields, **kwargs):
+            if created:
+                publish_event(OrderEvents.ENTREGA_ASIGNADA, {
+                    "entrega_id":        _sid(instance.id),
+                    "pedido_id":         _sid(instance.pedido_id),
+                    "tipo_entrega":      getattr(instance, "tipo_entrega", ""),
+                    "repartidor_id":     _sid(getattr(instance, "repartidor_id", None)),
+                    "repartidor_nombre": getattr(instance, "repartidor_nombre", ""),
+                    "direccion":         getattr(instance, "direccion", ""),
+                })
+                return
 
+            if update_fields and "estado" in update_fields:
+                estado = getattr(instance, "estado", "")
+                if estado == "COMPLETADA":
+                    publish_event(OrderEvents.ENTREGA_COMPLETADA, {
+                        "entrega_id":         _sid(instance.id),
+                        "pedido_id":          _sid(instance.pedido_id),
+                        "restaurante_id":     _sid(instance.pedido.restaurante_id),
+                        "cliente_id":         _sid(instance.pedido.cliente_id),
+                        "tipo_entrega":       getattr(instance, "tipo_entrega", ""),
+                        "fecha_entrega_real": (
+                            instance.fecha_entrega_real.isoformat()
+                            if getattr(instance, "fecha_entrega_real", None) else None
+                        ),
+                    })
+                elif estado == "FALLIDA":
+                    publish_event(OrderEvents.ENTREGA_FALLIDA, {
+                        "entrega_id": _sid(instance.id),
+                        "pedido_id":  _sid(instance.pedido_id),
+                        "motivo":     getattr(instance, "motivo_falla", ""),
+                    })
 
-# ─────────────────────────────────────────
-# COMANDA COCINA
-# ─────────────────────────────────────────
-
-@receiver(post_save, sender=ComandaCocina)
-def comanda_saved(sender, instance, created, update_fields, **kwargs):
-    if created:
-        publish_event(OrderEvents.COMANDA_CREADA, {
-            "comanda_id":     _sid(instance.id),
-            "pedido_id":      _sid(instance.pedido_id),
-            "restaurante_id": _sid(instance.pedido.restaurante_id),
-            "estacion":       instance.estacion,
-            "estado":         instance.estado,
-            "hora_envio":     instance.hora_envio.isoformat() if instance.hora_envio else None,
-        })
-        return
-
-    # Detectar cuando la comanda pasa a LISTO — save(update_fields=["estado", "hora_fin"])
-    if update_fields and "estado" in update_fields and instance.estado == "LISTO":
-        publish_event(OrderEvents.COMANDA_LISTA, {
-            "comanda_id":                _sid(instance.id),
-            "pedido_id":                 _sid(instance.pedido_id),
-            "restaurante_id":            _sid(instance.pedido.restaurante_id),
-            "estacion":                  instance.estacion,
-            "hora_envio":                instance.hora_envio.isoformat() if instance.hora_envio else None,
-            "hora_fin":                  instance.hora_fin.isoformat() if instance.hora_fin else None,
-            "tiempo_preparacion_segundos": instance.tiempo_preparacion_segundos,
-        })
+    except ImportError:
+        logger.warning(
+            "[order_signals] Modelo Entrega no encontrado — signal no conectado.")
 
 
-# ─────────────────────────────────────────
-# ENTREGA PEDIDO
-# ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Conectar todos los signals disponibles
+# El try/except por modelo permite que el servicio arranque aunque
+# algunos modelos no existan todavía.
+# ---------------------------------------------------------------------------
 
-@receiver(post_save, sender=EntregaPedido)
-def entrega_saved(sender, instance, created, update_fields, **kwargs):
-    if created:
-        # Solo publicar si tiene repartidor asignado (delivery)
-        if instance.tipo_entrega == "DELIVERY" and instance.repartidor_id:
-            publish_event(OrderEvents.ENTREGA_ASIGNADA, {
-                "entrega_id":       _sid(instance.id),
-                "pedido_id":        _sid(instance.pedido_id),
-                "tipo_entrega":     instance.tipo_entrega,
-                "repartidor_id":    _sid(instance.repartidor_id),
-                "repartidor_nombre": instance.repartidor_nombre,
-                "direccion":        instance.direccion,
-            })
-        return
-
-    # Detectar cambio de estado — save(update_fields=["estado_entrega", ...])
-    if not update_fields or "estado_entrega" not in update_fields:
-        return
-
-    if instance.estado_entrega == "ENTREGADO":
-        publish_event(OrderEvents.ENTREGA_COMPLETADA, {
-            "entrega_id":        _sid(instance.id),
-            "pedido_id":         _sid(instance.pedido_id),
-            "restaurante_id":    _sid(instance.pedido.restaurante_id),
-            "cliente_id":        _sid(instance.pedido.cliente_id),
-            "tipo_entrega":      instance.tipo_entrega,
-            "fecha_entrega_real": instance.fecha_entrega_real.isoformat() if instance.fecha_entrega_real else None,
-        })
-
-    elif instance.estado_entrega == "FALLIDO":
-        publish_event(OrderEvents.ENTREGA_FALLIDA, {
-            "entrega_id": _sid(instance.id),
-            "pedido_id":  _sid(instance.pedido_id),
-            "motivo":     "Entrega fallida",
-        })
+connect_pedido_signal()
+connect_comanda_signal()
+connect_entrega_signal()

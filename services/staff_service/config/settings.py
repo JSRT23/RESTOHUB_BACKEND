@@ -98,10 +98,15 @@ RABBITMQ = {
 
 # ---------------------------------------------------------------------------
 # DRF
+# BrowsableAPIRenderer solo en DEBUG — producción responde JSON puro.
 # ---------------------------------------------------------------------------
 
+_renderers = ["rest_framework.renderers.JSONRenderer"]
+if DEBUG:
+    _renderers.append("rest_framework.renderers.BrowsableAPIRenderer")
+
 REST_FRAMEWORK = {
-    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_RENDERER_CLASSES": _renderers,
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }

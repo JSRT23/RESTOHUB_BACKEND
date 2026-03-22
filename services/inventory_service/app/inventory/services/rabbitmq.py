@@ -1,23 +1,23 @@
 import json
-import uuid
 import logging
 import os
+import uuid
+from datetime import datetime, timezone
+
 import pika
 import pika.exceptions
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-RABBIT_HOST = os.getenv("RABBITMQ_HOST",     "rabbitmq")
-RABBIT_PORT = int(os.getenv("RABBITMQ_PORT", 5672))
-RABBIT_USER = os.getenv("RABBITMQ_USER",     "guest")
-RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
-RABBIT_VHOST = os.getenv("RABBITMQ_VHOST",    "/")
 EXCHANGE_NAME = os.getenv("RABBITMQ_EXCHANGE", "restohub")
 
 _connection = None
 _channel = None
 
+
+# ---------------------------------------------------------------------------
+# Gestión de conexión — patrón unificado con menu/order/staff
+# ---------------------------------------------------------------------------
 
 def _is_connected() -> bool:
     try:
@@ -29,18 +29,22 @@ def _is_connected() -> bool:
         return False
 
 
-def _connect():
+def _connect() -> None:
     global _connection, _channel
-    credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASSWORD)
+
+    from django.conf import settings
+    cfg = settings.RABBITMQ
+
+    credentials = pika.PlainCredentials(cfg["USER"], cfg["PASSWORD"])
     params = pika.ConnectionParameters(
-        host=RABBIT_HOST,
-        port=RABBIT_PORT,
-        virtual_host=RABBIT_VHOST,
+        host=cfg["HOST"],
+        port=cfg["PORT"],
+        virtual_host=cfg["VHOST"],
         credentials=credentials,
         heartbeat=120,
-        blocked_connection_timeout=30,
         connection_attempts=3,
         retry_delay=2,
+        blocked_connection_timeout=30,
     )
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
@@ -49,12 +53,16 @@ def _connect():
         exchange_type="topic",
         durable=True,
     )
-    logger.info("[RabbitMQ] inventory_service conectado a %s", RABBIT_HOST)
+    logger.info(
+        "[inventory_rabbitmq] Conectado al exchange '%s'", EXCHANGE_NAME)
 
 
 def _get_channel():
     global _connection, _channel
+
     if not _is_connected():
+        logger.warning(
+            "[inventory_rabbitmq] Canal no disponible — reconectando...")
         try:
             if _connection and not _connection.is_closed:
                 _connection.close()
@@ -63,8 +71,13 @@ def _get_channel():
         _connection = None
         _channel = None
         _connect()
+
     return _channel
 
+
+# ---------------------------------------------------------------------------
+# Construcción del mensaje estándar
+# ---------------------------------------------------------------------------
 
 def _build_message(event_type: str, data: dict) -> dict:
     return {
@@ -77,57 +90,42 @@ def _build_message(event_type: str, data: dict) -> dict:
     }
 
 
-def publish_event(event_type: str, data: dict) -> bool:
-    """
-    Publica un evento en RabbitMQ.
-    Reconecta automáticamente si la conexión está caída.
-    Nunca lanza excepción — no interrumpe el flujo principal.
-    """
-    global _connection, _channel
+# ---------------------------------------------------------------------------
+# Publicación — void, nunca lanza excepción
+# El retry automático lo maneja connection_attempts=3 en _connect().
+# ---------------------------------------------------------------------------
+
+def publish_event(event_type: str, data: dict) -> None:
     message = _build_message(event_type, data)
+    body = json.dumps(message, default=str)
 
     try:
         channel = _get_channel()
         channel.basic_publish(
             exchange=EXCHANGE_NAME,
             routing_key=event_type,
-            body=json.dumps(message, default=str),
+            body=body,
             properties=pika.BasicProperties(
-                content_type="application/json",
                 delivery_mode=2,
+                content_type="application/json",
             ),
         )
-        logger.info("[RabbitMQ] ✓ %s | event_id: %s",
-                    event_type, message["event_id"])
-        return True
+        logger.debug(
+            "[inventory_rabbitmq] Publicado '%s' | event_id: %s",
+            event_type, message["event_id"],
+        )
 
-    except (
-        pika.exceptions.AMQPConnectionError,
-        pika.exceptions.StreamLostError,
-        pika.exceptions.ConnectionClosedByBroker,
-    ) as e:
-        logger.warning(
-            "[RabbitMQ] Conexión caída (%s) — reintentando...", type(e).__name__)
+    except pika.exceptions.AMQPConnectionError as exc:
+        logger.error(
+            "[inventory_rabbitmq] Conexión caída al publicar '%s': %s",
+            event_type, exc,
+        )
+        global _connection, _channel
         _connection = None
         _channel = None
-        try:
-            channel = _get_channel()
-            channel.basic_publish(
-                exchange=EXCHANGE_NAME,
-                routing_key=event_type,
-                body=json.dumps(message, default=str),
-                properties=pika.BasicProperties(
-                    content_type="application/json",
-                    delivery_mode=2,
-                ),
-            )
-            logger.info("[RabbitMQ] ✓ %s (reintento ok)", event_type)
-            return True
-        except Exception as retry_err:
-            logger.error("[RabbitMQ] ✗ Reintento fallido '%s': %s",
-                         event_type, retry_err)
-            return False
 
-    except Exception as e:
-        logger.error("[RabbitMQ] ✗ Error inesperado '%s': %s", event_type, e)
-        return False
+    except Exception as exc:
+        logger.error(
+            "[inventory_rabbitmq] Error inesperado al publicar '%s': %s",
+            event_type, exc,
+        )
