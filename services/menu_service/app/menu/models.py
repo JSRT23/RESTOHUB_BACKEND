@@ -246,12 +246,16 @@ class PrecioPlato(models.Model):
     def esta_vigente(self):
         """Retorna True si el precio está activo y dentro del rango de fechas."""
         ahora = timezone.now()
+
         if not self.activo:
             return False
-        if self.fecha_inicio > ahora:
+
+        if self.fecha_inicio and self.fecha_inicio > ahora:
             return False
+
         if self.fecha_fin and self.fecha_fin < ahora:
             return False
+
         return True
 
     def __str__(self):
