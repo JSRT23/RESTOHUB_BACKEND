@@ -33,14 +33,19 @@ ALLOWED_HOSTS = ["*", "menu_service", "localhost", "127.0.0.1", "0.0.0.0"]
 
 # RabbitMQ
 RABBITMQ = {
-    "HOST":     os.getenv("RABBITMQ_HOST",     "rabbitmq"),
+    "HOST":     os.getenv("RABBITMQ_HOST", "rabbitmq"),
     "PORT":     int(os.getenv("RABBITMQ_PORT", 5672)),
-    "USER":     os.getenv("RABBITMQ_USER",     "guest"),
-    "PASSWORD": os.getenv("RABBITMQ_PASSWORD", "guest"),
-    "VHOST":    os.getenv("RABBITMQ_VHOST",    "/"),
+    "USER":     os.getenv("RABBITMQ_USER", "restohub"),
+    "PASSWORD": os.getenv("RABBITMQ_PASSWORD", "restohub"),
+    "VHOST":    os.getenv("RABBITMQ_VHOST", "/"),
     "EXCHANGE": os.getenv("RABBITMQ_EXCHANGE", "restohub"),
-}
 
+    # 🔥 NUEVO (importante)
+    "HEARTBEAT": int(os.getenv("RABBITMQ_HEARTBEAT", 120)),
+    "BLOCKED_CONNECTION_TIMEOUT": int(os.getenv("RABBITMQ_BLOCKED_TIMEOUT", 30)),
+    "CONNECTION_ATTEMPTS": int(os.getenv("RABBITMQ_CONN_ATTEMPTS", 5)),
+    "RETRY_DELAY": int(os.getenv("RABBITMQ_RETRY_DELAY", 3)),
+}
 
 # Application definition
 
@@ -53,7 +58,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'graphene_django',
     'rest_framework',
-    'app.menu',
+    'app.menu.apps.MenuConfig',
 
 ]
 
