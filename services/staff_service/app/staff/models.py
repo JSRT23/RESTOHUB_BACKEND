@@ -259,9 +259,10 @@ class Turno(models.Model):
 
     @property
     def duracion_programada_horas(self):
-        delta = self.fecha_fin - self.fecha_inicio
-        return round(delta.total_seconds() / 3600, 2)
+        if not self.fecha_inicio or not self.fecha_fin:
+            return None
 
+        return round((self.fecha_fin - self.fecha_inicio).total_seconds() / 3600, 2)
 
 # ---------------------------------------------------------------------------
 # RegistroAsistencia
@@ -269,6 +270,7 @@ class Turno(models.Model):
 # Fusiona lo que sería HorasTrabajadas: horas_normales y horas_extra
 # se calculan al cerrar (hora_salida) según ConfiguracionLaboralPais.
 # ---------------------------------------------------------------------------
+
 
 class RegistroAsistencia(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

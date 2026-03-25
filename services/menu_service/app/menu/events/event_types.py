@@ -1,3 +1,4 @@
+# menu_service/app/menu/events/event_types.py
 class MenuEvents:
     """
     Eventos publicados por menu_service hacia RabbitMQ.

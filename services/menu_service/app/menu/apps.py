@@ -7,4 +7,4 @@ class MenuConfig(AppConfig):
     name = "app.menu"
 
     def ready(self):
-        import app.menu.signals
+        import app.menu.signals.menu_signals
