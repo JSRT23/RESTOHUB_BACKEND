@@ -1,30 +1,20 @@
+# menu_service/app/menu/infrastructure/messaging/publisher.py
+# menu_service/app/menu/infrastructure/messaging/publisher.py
+
 import json
 import logging
-import uuid
-from datetime import datetime, timezone
-
 import pika
-
 from django.conf import settings
+
+from app.menu.events.builders import build_event
 from app.menu.infrastructure.messaging.connection import get_channel
 
 logger = logging.getLogger(__name__)
 
 
-def _build_message(event_type: str, data: dict) -> dict:
-    return {
-        "event_id": str(uuid.uuid4()),
-        "event_type": event_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "service_origin": "menu_service",
-        "version": "1.0",
-        "data": data,
-    }
-
-
 def publish_event(event_type: str, data: dict) -> None:
     try:
-        message = _build_message(event_type, data)
+        message = build_event(event_type, data)
         body = json.dumps(message, default=str)
 
         channel = get_channel()
@@ -39,6 +29,7 @@ def publish_event(event_type: str, data: dict) -> None:
             ),
         )
 
-    except Exception as e:
+        print(f"📡 EVENTO PUBLICADO: {event_type}")
 
-        raise
+    except Exception:
+        logger.exception("[publisher] Error publicando evento")

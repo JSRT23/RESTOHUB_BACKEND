@@ -1,22 +1,12 @@
-# menu_service/app/menu/infrastructure/messaging/connection.py
-import logging
+# staff_sercevice/app/staff/infrastructure/messaging/connection.py
 import pika
+import logging
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 _connection = None
 _channel = None
-
-
-def _is_connected():
-    try:
-        return (
-            _connection is not None and _connection.is_open
-            and _channel is not None and _channel.is_open
-        )
-    except Exception:
-        return False
 
 
 def _build_parameters():
@@ -32,16 +22,11 @@ def _build_parameters():
         port=cfg["PORT"],
         virtual_host=cfg["VHOST"],
         credentials=credentials,
-
-        # resiliencia
         heartbeat=cfg.get("HEARTBEAT", 120),
         blocked_connection_timeout=cfg.get("BLOCKED_CONNECTION_TIMEOUT", 30),
         connection_attempts=cfg.get("CONNECTION_ATTEMPTS", 5),
         retry_delay=cfg.get("RETRY_DELAY", 3),
-
-        client_properties={
-            "connection_name": "menu_service"
-        }
+        client_properties={"connection_name": "staff_service"}
     )
 
 
@@ -53,28 +38,26 @@ def _connect():
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
 
-    # ⚠️ siempre redeclarar exchange (idempotente en Rabbit)
     _channel.exchange_declare(
-        exchange=settings.RABBITMQ.get("EXCHANGE", "restohub"),
+        exchange=settings.RABBITMQ["EXCHANGE"],
         exchange_type="topic",
         durable=True,
     )
 
-    logger.info("[RabbitMQ] Conectado (menu_service)")
+    logger.info("[RabbitMQ] Conectado (staff_service)")
 
 
 def get_channel():
     global _connection, _channel
 
-    # 🔍 conexión sana → reutilizar
-    if _is_connected():
-        return _channel
-
-    logger.warning("[RabbitMQ] Reconectando...")
-
-    # 🧹 limpiar conexión anterior si quedó corrupta
     try:
-        if _connection and _connection.is_open:
+        if _connection and _connection.is_open and _channel and _channel.is_open:
+            return _channel
+    except Exception:
+        pass
+
+    try:
+        if _connection:
             _connection.close()
     except Exception:
         pass
@@ -82,11 +65,5 @@ def get_channel():
     _connection = None
     _channel = None
 
-    # 🔁 reconexión con intento controlado
-    try:
-        _connect()
-    except Exception as e:
-        logger.exception("[RabbitMQ] Error conectando")
-        raise e  # ⚠️ aquí sí relanzamos: sin conexión no se puede publicar
-
+    _connect()
     return _channel

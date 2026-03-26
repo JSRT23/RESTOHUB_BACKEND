@@ -1,7 +1,14 @@
+# menu_service/app/menu/views.py
+# menu_service/app/menu/views.py
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+
+from app.menu.events.event_types import MenuEvents
+from app.menu.infrastructure.messaging.event_mixin import EventPublishingMixin
+from app.menu.infrastructure.messaging.publisher import publish_event
 
 from .models import Restaurante, Categoria, Plato, Ingrediente, PlatoIngrediente, PrecioPlato
 from .serializers import (
@@ -18,83 +25,103 @@ from .serializers import (
     MenuRestauranteSerializer,
 )
 
-
 # ─────────────────────────────────────────
 # RESTAURANTE
 # ─────────────────────────────────────────
 
-class RestauranteViewSet(viewsets.ModelViewSet):
+
+class RestauranteViewSet(EventPublishingMixin, viewsets.ModelViewSet):
     queryset = Restaurante.objects.all()
     serializer_class = RestauranteSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
 
-    def get_queryset(self):
-        qs = Restaurante.objects.all()
-        activo = self.request.query_params.get("activo")
-        pais = self.request.query_params.get("pais")
-        if activo is not None:
-            qs = qs.filter(activo=activo.lower() == "true")
-        if pais:
-            qs = qs.filter(pais__icontains=pais)
-        return qs
+    event_created = MenuEvents.RESTAURANTE_CREATED
+    event_updated = MenuEvents.RESTAURANTE_UPDATED
+
+    def build_event_data(self, instance):
+        return {
+            "restaurante_id": str(instance.id),
+            "nombre": instance.nombre,
+            "pais": instance.pais,
+            "ciudad": instance.ciudad,
+            "moneda": instance.moneda,
+            "activo": instance.activo,
+        }
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.publish_created_event(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.publish_updated_event(instance)
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
-        restaurante = self.get_object()
-        restaurante.activo = True
-        # dispara restaurante.updated
-        restaurante.save(update_fields=["activo"])
+        obj = self.get_object()
+        obj.activo = True
+        obj.save()
+        self.publish_updated_event(obj)
         return Response({"detail": "Restaurante activado."})
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        restaurante = self.get_object()
-        restaurante.activo = False
-        # dispara restaurante.deactivated
-        restaurante.save(update_fields=["activo"])
-        return Response({"detail": "Restaurante desactivado."})
+        obj = self.get_object()
+        obj.activo = False
+        obj.save()
 
-    @action(detail=True, methods=["get"])
-    def menu(self, request, pk=None):
-        """
-        GET /restaurantes/{id}/menu/
-        Retorna el menú activo del restaurante agrupado por categoría.
-        Solo incluye platos con precio activo y vigente en ese local.
-        """
-        restaurante = self.get_object()
-        serializer = MenuRestauranteSerializer(restaurante)
-        return Response(serializer.data)
+        publish_event(
+            MenuEvents.RESTAURANTE_DEACTIVATED,
+            {"restaurante_id": str(obj.id)}
+        )
+        return Response({"detail": "Restaurante desactivado."})
 
 
 # ─────────────────────────────────────────
 # CATEGORIA
 # ─────────────────────────────────────────
 
-class CategoriaViewSet(viewsets.ModelViewSet):
+class CategoriaViewSet(EventPublishingMixin, viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
-    http_method_names = ["get", "post", "patch", "head", "options"]
 
-    def get_queryset(self):
-        qs = Categoria.objects.all()
-        activo = self.request.query_params.get("activo")
-        if activo is not None:
-            qs = qs.filter(activo=activo.lower() == "true")
-        return qs
+    event_created = MenuEvents.CATEGORIA_CREATED
+    event_updated = MenuEvents.CATEGORIA_UPDATED
+
+    def build_event_data(self, instance):
+        return {
+            "categoria_id": str(instance.id),
+            "nombre": instance.nombre,
+            "orden": instance.orden,
+            "activo": instance.activo,
+        }
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.publish_created_event(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.publish_updated_event(instance)
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
-        categoria = self.get_object()
-        categoria.activo = True
-        categoria.save(update_fields=["activo"])
+        obj = self.get_object()
+        obj.activo = True
+        obj.save()
+        self.publish_updated_event(obj)
         return Response({"detail": "Categoría activada."})
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        categoria = self.get_object()
-        categoria.activo = False
-        # dispara categoria.deactivated
-        categoria.save(update_fields=["activo"])
+        obj = self.get_object()
+        obj.activo = False
+        obj.save()
+
+        publish_event(
+            MenuEvents.CATEGORIA_DEACTIVATED,
+            {"categoria_id": str(obj.id)}
+        )
         return Response({"detail": "Categoría desactivada."})
 
 
@@ -102,31 +129,39 @@ class CategoriaViewSet(viewsets.ModelViewSet):
 # INGREDIENTE
 # ─────────────────────────────────────────
 
-class IngredienteViewSet(viewsets.ModelViewSet):
+class IngredienteViewSet(EventPublishingMixin, viewsets.ModelViewSet):
     queryset = Ingrediente.objects.all()
     serializer_class = IngredienteSerializer
-    http_method_names = ["get", "post", "patch", "head", "options"]
 
-    def get_queryset(self):
-        qs = Ingrediente.objects.all()
-        activo = self.request.query_params.get("activo")
-        if activo is not None:
-            qs = qs.filter(activo=activo.lower() == "true")
-        return qs
+    event_created = MenuEvents.INGREDIENTE_CREATED
+    event_updated = MenuEvents.INGREDIENTE_UPDATED
 
-    @action(detail=True, methods=["post"])
-    def activar(self, request, pk=None):
-        ingrediente = self.get_object()
-        ingrediente.activo = True
-        ingrediente.save(update_fields=["activo"])
-        return Response({"detail": "Ingrediente activado."})
+    def build_event_data(self, instance):
+        return {
+            "ingrediente_id": str(instance.id),
+            "nombre": instance.nombre,
+            "unidad_medida": instance.unidad_medida,
+            "activo": instance.activo,
+        }
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.publish_created_event(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.publish_updated_event(instance)
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        ingrediente = self.get_object()
-        ingrediente.activo = False
-        # dispara ingrediente.deactivated
-        ingrediente.save(update_fields=["activo"])
+        obj = self.get_object()
+        obj.activo = False
+        obj.save()
+
+        publish_event(
+            MenuEvents.INGREDIENTE_DEACTIVATED,
+            {"ingrediente_id": str(obj.id)}
+        )
         return Response({"detail": "Ingrediente desactivado."})
 
 
@@ -134,12 +169,11 @@ class IngredienteViewSet(viewsets.ModelViewSet):
 # PLATO
 # ─────────────────────────────────────────
 
-class PlatoViewSet(viewsets.ModelViewSet):
-    queryset = Plato.objects.select_related("categoria").prefetch_related(
-        "ingredientes__ingrediente",
-        "precios__restaurante",
-    )
-    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+class PlatoViewSet(EventPublishingMixin, viewsets.ModelViewSet):
+    queryset = Plato.objects.all()
+
+    event_created = MenuEvents.PLATO_CREATED
+    event_updated = MenuEvents.PLATO_UPDATED
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -148,107 +182,164 @@ class PlatoViewSet(viewsets.ModelViewSet):
             return PlatoWriteSerializer
         return PlatoSerializer
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        activo = self.request.query_params.get("activo")
-        categoria = self.request.query_params.get("categoria")
-        if activo is not None:
-            qs = qs.filter(activo=activo.lower() == "true")
-        if categoria:
-            qs = qs.filter(categoria_id=categoria)
-        return qs
+    def build_event_data(self, instance):
+        return {
+            "plato_id": str(instance.id),
+            "nombre": instance.nombre,
+            "descripcion": instance.descripcion,
+            "categoria_id": str(instance.categoria_id) if instance.categoria_id else None,
+            "imagen": instance.imagen,
+            "activo": instance.activo,
+        }
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.publish_created_event(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.publish_updated_event(instance)
+
+    def perform_destroy(self, instance):
+        plato_id = str(instance.id)
+        instance.delete()
+
+        publish_event(
+            MenuEvents.PLATO_DELETED,
+            {"plato_id": plato_id}
+        )
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
-        plato = self.get_object()
-        plato.activo = True
-        plato.save(update_fields=["activo"])   # dispara plato.activated
+        obj = self.get_object()
+        obj.activo = True
+        obj.save()
+
+        publish_event(
+            MenuEvents.PLATO_ACTIVATED,
+            {"plato_id": str(obj.id)}
+        )
         return Response({"detail": "Plato activado."})
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        plato = self.get_object()
-        plato.activo = False
-        plato.save(update_fields=["activo"])   # dispara plato.deactivated
+        obj = self.get_object()
+        obj.activo = False
+        obj.save()
+
+        publish_event(
+            MenuEvents.PLATO_DEACTIVATED,
+            {"plato_id": str(obj.id)}
+        )
         return Response({"detail": "Plato desactivado."})
 
-    @action(detail=True, methods=["get", "post"], url_path="ingredientes")
+    @action(detail=True, methods=["get", "post"])
     def ingredientes(self, request, pk=None):
-        """
-        GET  /platos/{id}/ingredientes/ → lista ingredientes del plato
-        POST /platos/{id}/ingredientes/ → agrega un ingrediente al plato
-        """
         plato = self.get_object()
 
         if request.method == "GET":
-            qs = PlatoIngrediente.objects.filter(
-                plato=plato).select_related("ingrediente")
-            serializer = PlatoIngredienteSerializer(qs, many=True)
-            return Response(serializer.data)
+            qs = PlatoIngrediente.objects.filter(plato=plato)
+            return Response(PlatoIngredienteSerializer(qs, many=True).data)
 
         serializer = PlatoIngredienteWriteSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save(plato=plato)    # dispara plato_ingrediente.added
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            instance = serializer.save(plato=plato)
 
-    @action(
-        detail=True,
-        methods=["delete"],
-        url_path="ingredientes/(?P<ingrediente_id>[^/.]+)"
-    )
+            publish_event(
+                MenuEvents.PLATO_INGREDIENTE_ADDED,
+                {
+                    "plato_id": str(plato.id),
+                    "ingrediente_id": str(instance.ingrediente.id),
+                    "cantidad": str(instance.cantidad),
+                    "unidad_medida": instance.ingrediente.unidad_medida,
+                }
+            )
+
+            return Response(serializer.data, status=201)
+
+        return Response(serializer.errors, status=400)
+
+    @action(detail=True, methods=["delete"], url_path="ingredientes/(?P<ingrediente_id>[^/.]+)")
     def quitar_ingrediente(self, request, pk=None, ingrediente_id=None):
-        """
-        DELETE /platos/{id}/ingredientes/{ingrediente_id}/
-        Elimina un ingrediente del plato — dispara plato_ingrediente.removed
-        """
         plato = self.get_object()
-        ingrediente = get_object_or_404(
+
+        rel = get_object_or_404(
             PlatoIngrediente,
             plato=plato,
             ingrediente_id=ingrediente_id
         )
-        ingrediente.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        rel.delete()
+
+        publish_event(
+            MenuEvents.PLATO_INGREDIENTE_REMOVED,
+            {
+                "plato_id": str(plato.id),
+                "ingrediente_id": str(ingrediente_id),
+            }
+        )
+
+        return Response(status=204)
 
 
 # ─────────────────────────────────────────
-# PRECIO PLATO
+# PRECIO
 # ─────────────────────────────────────────
 
-class PrecioPlatoViewSet(viewsets.ModelViewSet):
-    queryset = PrecioPlato.objects.select_related("plato", "restaurante")
-    http_method_names = ["get", "post", "patch", "head", "options"]
+class PrecioPlatoViewSet(EventPublishingMixin, viewsets.ModelViewSet):
+    queryset = PrecioPlato.objects.all()
+
+    event_created = MenuEvents.PRECIO_CREATED
+    event_updated = MenuEvents.PRECIO_UPDATED
 
     def get_serializer_class(self):
         if self.action in ("create", "partial_update"):
             return PrecioPlatoWriteSerializer
         return PrecioPlatoSerializer
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        plato = self.request.query_params.get("plato")
-        restaurante = self.request.query_params.get("restaurante")
-        activo = self.request.query_params.get("activo")
+    def build_event_data(self, instance):
+        return {
+            "precio_id": str(instance.id),
+            "plato_id": str(instance.plato_id),
+            "restaurante_id": str(instance.restaurante_id),
+            "precio": str(instance.precio),
+            "fecha_inicio": instance.fecha_inicio.isoformat(),
+            "fecha_fin": instance.fecha_fin.isoformat() if instance.fecha_fin else None,
+            "activo": instance.activo,
+        }
 
-        if plato:
-            qs = qs.filter(plato_id=plato)
-        if restaurante:
-            qs = qs.filter(restaurante_id=restaurante)
-        if activo is not None:
-            qs = qs.filter(activo=activo.lower() == "true")
-        return qs
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.publish_created_event(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.publish_updated_event(instance)
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
-        precio = self.get_object()
-        precio.activo = True
-        precio.save(update_fields=["activo"])   # dispara precio.activated
+        obj = self.get_object()
+        obj.activo = True
+        obj.save()
+
+        publish_event(
+            MenuEvents.PRECIO_ACTIVATED,
+            self.build_event_data(obj)
+        )
         return Response({"detail": "Precio activado."})
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        precio = self.get_object()
-        precio.activo = False
-        precio.save(update_fields=["activo"])   # dispara precio.deactivated
+        obj = self.get_object()
+        obj.activo = False
+        obj.save()
+
+        publish_event(
+            MenuEvents.PRECIO_DEACTIVATED,
+            {
+                "precio_id": str(obj.id),
+                "plato_id": str(obj.plato_id),
+                "restaurante_id": str(obj.restaurante_id),
+            }
+        )
         return Response({"detail": "Precio desactivado."})
