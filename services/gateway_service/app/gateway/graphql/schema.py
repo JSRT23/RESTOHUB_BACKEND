@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/graphql/schema.py
 import graphene
 
 from .services.menu.queries import MenuQuery
