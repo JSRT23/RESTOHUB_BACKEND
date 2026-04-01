@@ -1,3 +1,4 @@
+# loyalty_service/app/loyalty/models.py
 import uuid
 from django.db import models
 

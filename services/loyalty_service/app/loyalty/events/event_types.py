@@ -1,3 +1,4 @@
+# loyalty_service/app/loyalty/events/event_types.py
 class LoyaltyEvents:
     """
     Eventos publicados por loyalty_service al exchange 'restohub'.

@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     "graphene_django",
     "app.gateway",
+    'corsheaders',
 ]
 
 
@@ -47,6 +48,7 @@ GRAPHENE = {
 }
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -74,6 +76,10 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # Permitir desde el frontend en React
+]
 
 
 # Database
