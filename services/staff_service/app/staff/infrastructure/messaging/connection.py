@@ -1,69 +1,52 @@
-# staff_sercevice/app/staff/infrastructure/messaging/connection.py
-import pika
+# staff_service/app/staff/infrastructure/messaging/connection.py
 import logging
+import threading
+
+import pika
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-_connection = None
-_channel = None
+_lock = threading.Lock()
+_connection: pika.BlockingConnection | None = None
 
 
-def _build_parameters():
-    cfg = settings.RABBITMQ
-
-    credentials = pika.PlainCredentials(
-        cfg["USER"],
-        cfg["PASSWORD"]
-    )
-
+def _build_parameters() -> pika.ConnectionParameters:
+    r = settings.RABBITMQ
     return pika.ConnectionParameters(
-        host=cfg["HOST"],
-        port=cfg["PORT"],
-        virtual_host=cfg["VHOST"],
-        credentials=credentials,
-        heartbeat=cfg.get("HEARTBEAT", 120),
-        blocked_connection_timeout=cfg.get("BLOCKED_CONNECTION_TIMEOUT", 30),
-        connection_attempts=cfg.get("CONNECTION_ATTEMPTS", 5),
-        retry_delay=cfg.get("RETRY_DELAY", 3),
-        client_properties={"connection_name": "staff_service"}
+        host=r["HOST"],
+        port=r["PORT"],
+        virtual_host=r["VHOST"],
+        credentials=pika.PlainCredentials(r["USER"], r["PASSWORD"]),
+        heartbeat=600,
+        blocked_connection_timeout=300,
     )
 
 
-def _connect():
-    global _connection, _channel
+def get_rabbitmq_connection() -> pika.BlockingConnection:
+    """
+    Singleton de conexión. Una sola TCP por proceso.
+    Recrea si la conexión está cerrada.
+    """
+    global _connection
 
-    params = _build_parameters()
+    with _lock:
+        if _connection is None or _connection.is_closed:
+            logger.info("🐇 Creando conexión a RabbitMQ (staff)...")
+            _connection = pika.BlockingConnection(_build_parameters())
+            logger.info("✅ Conexión establecida")
 
-    _connection = pika.BlockingConnection(params)
-    _channel = _connection.channel()
-
-    _channel.exchange_declare(
-        exchange=settings.RABBITMQ["EXCHANGE"],
-        exchange_type="topic",
-        durable=True,
-    )
-
-    logger.info("[RabbitMQ] Conectado (staff_service)")
+    return _connection
 
 
-def get_channel():
-    global _connection, _channel
+def close_connection() -> None:
+    global _connection
 
-    try:
-        if _connection and _connection.is_open and _channel and _channel.is_open:
-            return _channel
-    except Exception:
-        pass
-
-    try:
-        if _connection:
-            _connection.close()
-    except Exception:
-        pass
-
-    _connection = None
-    _channel = None
-
-    _connect()
-    return _channel
+    with _lock:
+        if _connection and not _connection.is_closed:
+            try:
+                _connection.close()
+                logger.info("🔌 Conexión RabbitMQ cerrada")
+            except Exception:
+                logger.exception("Error cerrando conexión")
+        _connection = None

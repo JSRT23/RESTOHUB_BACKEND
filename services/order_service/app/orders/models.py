@@ -1,3 +1,4 @@
+# orders_service/app/orders/models.py
 import uuid
 from django.db import models
 

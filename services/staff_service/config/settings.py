@@ -94,8 +94,9 @@ RABBITMQ = {
     "PASSWORD": os.getenv("RABBITMQ_PASSWORD", "guest"),
     "VHOST":    os.getenv("RABBITMQ_VHOST",    "/"),
     "EXCHANGE": os.getenv("RABBITMQ_EXCHANGE", "restohub"),
-}
 
+}
+SERVICE_NAME = os.getenv("SERVICE_NAME", "unknown_service")
 # ---------------------------------------------------------------------------
 # DRF
 # BrowsableAPIRenderer solo en DEBUG — producción responde JSON puro.
@@ -111,7 +112,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
 }
 
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------
 # Internacionalización
 # ---------------------------------------------------------------------------
 

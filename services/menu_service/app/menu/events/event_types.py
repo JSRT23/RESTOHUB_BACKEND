@@ -27,117 +27,108 @@ class MenuEvents:
         "data":           { ... payload específico del evento }
     }
     """
+    # =========================================================
+    # 🍽️ PLATOS
+    # =========================================================
 
-    # ─────────────────────────────────────────
-    # PLATO
-    # Consumidores: inventory_service, loyalty_service, order_service
-    # ─────────────────────────────────────────
+    PLATO_CREADO = "app.menu.plato.creado"
+    # data: { plato_id, nombre, descripcion, categoria_id, activo }
 
-    PLATO_CREATED = "app.menu.plato.created"
-    # data: { plato_id, nombre, descripcion, categoria_id, imagen, activo }
+    PLATO_ACTUALIZADO = "app.menu.plato.actualizado"
+    # data: { plato_id, cambios: {...} }
 
-    PLATO_UPDATED = "app.menu.plato.updated"
-    # data: { plato_id, campos_modificados: {...}, timestamp_anterior }
-
-    PLATO_DELETED = "app.menu.plato.deleted"
+    PLATO_ACTIVADO = "app.menu.plato.activado"
     # data: { plato_id }
-    # NOTA: usar con precaución — preferir PLATO_DEACTIVATED.
-    # inventory_service debe limpiar stock asociado al recibir este evento.
 
-    PLATO_ACTIVATED = "app.menu.plato.activated"
+    PLATO_DESACTIVADO = "app.menu.plato.desactivado"
     # data: { plato_id }
-    # order_service y loyalty_service habilitan el plato en sus cachés.
 
-    PLATO_DEACTIVATED = "app.menu.plato.deactivated"
+    PLATO_ELIMINADO = "app.menu.plato.eliminado"
     # data: { plato_id }
-    # order_service rechaza nuevos pedidos con ese plato_id.
-    # loyalty_service suspende promociones asociadas.
+    # ⚠️ Usar solo si realmente se elimina físicamente
 
-    # ─────────────────────────────────────────
-    # PRECIO PLATO
-    # Consumidores: order_service, loyalty_service
-    # ─────────────────────────────────────────
+    # =========================================================
+    # 💰 PRECIOS
+    # =========================================================
 
-    PRECIO_CREATED = "app.menu.precio.created"
-    # data: { precio_id, plato_id, restaurante_id, precio, moneda,
-    #         fecha_inicio, fecha_fin, activo }
+    PRECIO_CREADO = "app.menu.precio.creado"
+    # data: {
+    #   precio_id,
+    #   plato_id,
+    #   restaurante_id,
+    #   precio,
+    #   moneda,
+    #   activo
+    # }
 
-    PRECIO_UPDATED = "app.menu.precio.updated"
-    # data: { precio_id, plato_id, restaurante_id, precio_anterior,
-    #         precio_nuevo, fecha_inicio, fecha_fin }
-    # order_service invalida su caché local del precio.
+    PRECIO_ACTUALIZADO = "app.menu.precio.actualizado"
+    # data: {
+    #   precio_id,
+    #   plato_id,
+    #   restaurante_id,
+    #   precio_anterior,
+    #   precio_nuevo
+    # }
 
-    PRECIO_ACTIVATED = "app.menu.precio.activated"
-    # data: { precio_id, plato_id, restaurante_id, precio, moneda }
-    # Evento separado de CREATED — reactiva un precio previamente desactivado.
-
-    PRECIO_DEACTIVATED = "app.menu.precio.deactivated"
+    PRECIO_ACTIVADO = "app.menu.precio.activado"
     # data: { precio_id, plato_id, restaurante_id }
-    # El plato deja de estar disponible en ese restaurante.
 
-    # ─────────────────────────────────────────
-    # RESTAURANTE
-    # Consumidores: inventory_service, staff_service, order_service
-    # ─────────────────────────────────────────
+    PRECIO_DESACTIVADO = "app.menu.precio.desactivado"
+    # data: { precio_id, plato_id, restaurante_id }
 
-    RESTAURANTE_CREATED = "app.menu.restaurante.created"
+    # =========================================================
+    # 🏪 RESTAURANTES
+    # =========================================================
+
+    RESTAURANTE_CREADO = "app.menu.restaurante.creado"
     # data: { restaurante_id, nombre, pais, ciudad, moneda }
-    # inventory_service crea un registro de stock vacío para el local.
-    # staff_service inicializa la configuración laboral por país.
 
-    RESTAURANTE_UPDATED = "app.menu.restaurante.updated"
-    # data: { restaurante_id, campos_modificados: {...} }
+    RESTAURANTE_ACTUALIZADO = "app.menu.restaurante.actualizado"
+    # data: { restaurante_id, cambios: {...} }
 
-    RESTAURANTE_DEACTIVATED = "app.menu.restaurante.deactivated"
+    RESTAURANTE_DESACTIVADO = "app.menu.restaurante.desactivado"
     # data: { restaurante_id }
-    # Todos los servicios deben dejar de procesar operaciones de ese local.
 
-    # ─────────────────────────────────────────
-    # CATEGORIA
-    # Consumidores: loyalty_service (filtrar promos por categoría)
-    # ─────────────────────────────────────────
+    # =========================================================
+    # 🗂️ CATEGORÍAS
+    # =========================================================
 
-    CATEGORIA_CREATED = "app.menu.categoria.created"
-    # data: { categoria_id, nombre, orden, activo }
+    CATEGORIA_CREADA = "app.menu.categoria.creada"
+    # data: { categoria_id, nombre, activo }
 
-    CATEGORIA_UPDATED = "app.menu.categoria.updated"
-    # data: { categoria_id, campos_modificados: {...} }
+    CATEGORIA_ACTUALIZADA = "app.menu.categoria.actualizada"
+    # data: { categoria_id, cambios: {...} }
 
-    CATEGORIA_DEACTIVATED = "app.menu.categoria.deactivated"
+    CATEGORIA_DESACTIVADA = "app.menu.categoria.desactivada"
     # data: { categoria_id }
-    # loyalty_service suspende promos asociadas a esa categoría.
 
-    # ─────────────────────────────────────────
-    # INGREDIENTE
-    # Consumidores: inventory_service (catálogo de ingredientes y stock)
-    # ─────────────────────────────────────────
+    # =========================================================
+    # 🧪 INGREDIENTES
+    # =========================================================
 
-    INGREDIENTE_CREATED = "app.menu.ingrediente.created"
+    INGREDIENTE_CREADO = "app.menu.ingrediente.creado"
     # data: { ingrediente_id, nombre, unidad_medida }
-    # inventory_service registra el ingrediente en su catálogo de stock.
 
-    INGREDIENTE_UPDATED = "app.menu.ingrediente.updated"
-    # data: { ingrediente_id, campos_modificados: {...} }
+    INGREDIENTE_ACTUALIZADO = "app.menu.ingrediente.actualizado"
+    # data: { ingrediente_id, cambios: {...} }
 
-    INGREDIENTE_DEACTIVATED = "app.menu.ingrediente.deactivated"
+    INGREDIENTE_DESACTIVADO = "app.menu.ingrediente.desactivado"
     # data: { ingrediente_id }
-    # inventory_service marca el ingrediente como descontinuado.
 
-    # ─────────────────────────────────────────
-    # PLATO INGREDIENTE
-    # Consumidores: inventory_service
-    # Permite recalcular con precisión el consumo de stock por pedido.
-    # Más granular que un solo .updated para que inventory sepa exactamente qué cambió.
-    # ─────────────────────────────────────────
+    # =========================================================
+    # 🍳 RELACIÓN PLATO - INGREDIENTE
+    # =========================================================
 
-    PLATO_INGREDIENTE_ADDED = "app.menu.plato_ingrediente.added"
+    PLATO_INGREDIENTE_AGREGADO = "app.menu.plato_ingrediente.agregado"
     # data: { plato_id, ingrediente_id, cantidad, unidad_medida }
-    # inventory_service actualiza la receta del plato sumando el nuevo ingrediente.
 
-    PLATO_INGREDIENTE_REMOVED = "app.menu.plato_ingrediente.removed"
+    PLATO_INGREDIENTE_ELIMINADO = "app.menu.plato_ingrediente.eliminado"
     # data: { plato_id, ingrediente_id }
-    # inventory_service elimina el ingrediente de la receta del plato.
 
-    PLATO_INGREDIENTE_CANTIDAD_UPDATED = "app.menu.plato_ingrediente.cantidad_updated"
-    # data: { plato_id, ingrediente_id, cantidad_anterior, cantidad_nueva, unidad_medida }
-    # inventory_service recalcula el descuento de stock por pedido.
+    PLATO_INGREDIENTE_ACTUALIZADO = "app.menu.plato_ingrediente.actualizado"
+    # data: {
+    #   plato_id,
+    #   ingrediente_id,
+    #   cantidad_anterior,
+    #   cantidad_nueva
+    # }

@@ -1,3 +1,4 @@
+# menu_service/app/menu/models.py
 import uuid
 from django.db import models
 from django.core.exceptions import ValidationError

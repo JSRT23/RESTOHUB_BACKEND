@@ -1,88 +1,69 @@
 # staff_service/app/staff/events/event_types.py
 class StaffEvents:
+    """
+    Eventos publicados por staff_service.
+
+    Convención: app.{servicio}.{entidad}.{accion}
+
+    staff_service NO es dueño del pedido.
+    Solo emite eventos de operación interna.
+
+    Consumidores:
+    ┌──────────────────────────────────────┬────────────────────────────┐
+    │ Evento                               │ Consumidores               │
+    ├──────────────────────────────────────┼────────────────────────────┤
+    │ turno.*                              │ analytics_service          │
+    │ asistencia.*                         │ analytics_service          │
+    │ cocina.asignacion.creada             │ order_service              │
+    │ cocina.asignacion.completada         │ order_service              │
+    │ cocina.sla.excedido                  │ order_service              │
+    │ entrega.asignada                     │ order_service              │
+    │ alerta.*                             │ gateway (dashboard)        │
+    │ nomina.cerrada                       │ analytics_service          │
+    └──────────────────────────────────────┴────────────────────────────┘
+    """
 
     # ─────────────────────────────────────────
-    # TURNOS
-    # Consumidores: payroll_service, analytics_service
+    # 👷 TURNOS
     # ─────────────────────────────────────────
 
-    TURNO_CREATED = "app.staff.turno.created"
-    # data: { turno_id, empleado_id, restaurante_id, fecha_inicio, fecha_fin }
-
-    TURNO_UPDATED = "app.staff.turno.updated"
-    # data: { turno_id, campos_modificados: {...} }
-
-    TURNO_ACTIVATED = "app.staff.turno.activated"
-    # data: { turno_id }
-    # El turno pasa a estado activo (listo para trabajar).
-
-    TURNO_COMPLETED = "app.staff.turno.completed"
-    # data: { turno_id, fecha_fin_real }
-    # payroll_service calcula horas trabajadas.
-
-    TURNO_CANCELLED = "app.staff.turno.cancelled"
-    # data: { turno_id, motivo }
-    # payroll_service evita cálculos de pago para este turno.
+    TURNO_CREADO = "app.staff.turno.creado"
+    TURNO_ACTUALIZADO = "app.staff.turno.actualizado"
+    TURNO_ACTIVADO = "app.staff.turno.activado"
+    TURNO_COMPLETADO = "app.staff.turno.completado"
+    TURNO_CANCELADO = "app.staff.turno.cancelado"
 
     # ─────────────────────────────────────────
-    # ASISTENCIA
-    # Consumidores: payroll_service, analytics_service
+    # ⏱️ ASISTENCIA
     # ─────────────────────────────────────────
 
-    ASISTENCIA_CHECKIN = "app.staff.asistencia.checkin"
-    # data: { asistencia_id, empleado_id, turno_id, timestamp }
-    # Marca inicio de jornada real.
-
-    ASISTENCIA_CHECKOUT = "app.staff.asistencia.checkout"
-    # data: { asistencia_id, empleado_id, turno_id, timestamp }
-    # Marca fin de jornada real.
+    ASISTENCIA_REGISTRADA = "app.staff.asistencia.registrada"
+    # data: { asistencia_id, empleado_id, turno_id, tipo: "entrada|salida", timestamp }
 
     # ─────────────────────────────────────────
-    # COCINA
-    # Consumidores: order_service, analytics_service
+    # 🍳 COCINA
     # ─────────────────────────────────────────
 
-    COCINA_ASIGNACION_CREATED = "app.staff.cocina.asignacion.created"
-    # data: { asignacion_id, pedido_id, empleado_id, restaurante_id }
-    # order_service actualiza estado del pedido a "en preparación".
-
-    COCINA_ASIGNACION_COMPLETED = "app.staff.cocina.asignacion.completed"
-    # data: { asignacion_id, pedido_id, empleado_id, tiempo_preparacion }
-    # order_service marca pedido como "listo para entrega".
-
+    COCINA_ASIGNACION_CREADA = "app.staff.cocina.asignacion.creada"
+    COCINA_ASIGNACION_COMPLETADA = "app.staff.cocina.asignacion.completada"
     COCINA_SLA_EXCEDIDO = "app.staff.cocina.sla.excedido"
-    # data: { pedido_id, tiempo_estimado, tiempo_real }
-    # alert_service genera alerta operativa.
 
     # ─────────────────────────────────────────
-    # ENTREGAS
-    # Consumidores: order_service, analytics_service
+    # 🚚 ENTREGAS
     # ─────────────────────────────────────────
 
     ENTREGA_ASIGNADA = "app.staff.entrega.asignada"
-    # data: { entrega_id, pedido_id, empleado_id, restaurante_id }
-    # order_service cambia estado a "en camino".
-
-    ENTREGA_FINALIZADA = "app.staff.entrega.finalizada"
-    # data: { entrega_id, pedido_id, empleado_id, timestamp }
-    # order_service marca pedido como "entregado".
+    # ⚠️ entrega.finalizada lo controla order_service
 
     # ─────────────────────────────────────────
-    # ALERTAS
-    # Consumidores: alert_service
+    # 🚨 ALERTAS
     # ─────────────────────────────────────────
 
-    ALERTA_CREATED = "app.staff.alerta.created"
-    # data: { alerta_id, tipo, descripcion, prioridad, restaurante_id }
-
-    ALERTA_RESOLVED = "app.staff.alerta.resolved"
-    # data: { alerta_id, timestamp_resolucion }
+    ALERTA_CREADA = "app.staff.alerta.creada"
+    ALERTA_RESUELTA = "app.staff.alerta.resuelta"
 
     # ─────────────────────────────────────────
-    # NÓMINA
-    # Consumidores: payroll_service, finance_service
+    # 💰 NÓMINA
     # ─────────────────────────────────────────
 
-    NOMINA_CLOSED = "app.staff.nomina.closed"
-    # data: { nomina_id, periodo_inicio, periodo_fin, total_pagado }
-    # finance_service registra egreso global.
+    NOMINA_CERRADA = "app.staff.nomina.cerrada"

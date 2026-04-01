@@ -101,7 +101,21 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-
+  inventory_consumer:
+    build: ./services/inventory_service
+    command: python manage.py consume_inventory_events
+    volumes:
+      - ./services/inventory_service:/app
+    env_file:
+      - ./services/inventory_service/.env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      inventory_service:
+        condition: service_started
   # ---------------------------------------------------------------------------
   # Nuevos servicios
   # ---------------------------------------------------------------------------
@@ -167,7 +181,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-
+      staff_service:
+        condition: service_started
   # ---------------------------------------------------------------------------
   # Gateway
   # ---------------------------------------------------------------------------

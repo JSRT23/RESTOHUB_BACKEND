@@ -1,3 +1,4 @@
+# inventory_service/app/inventory/models.py
 import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
