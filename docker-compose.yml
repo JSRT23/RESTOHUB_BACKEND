@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   # ---------------------------------------------------------------------------
   # Infraestructura
@@ -21,6 +23,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - restohub_network
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -38,6 +42,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - restohub_network
+
   redis:
     image: redis:7-alpine
     container_name: restohub_redis
@@ -52,9 +59,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - restohub_network
 
   # ---------------------------------------------------------------------------
-  # Servicios existentes
+  # Menu Service
   # ---------------------------------------------------------------------------
 
   menu_service:
@@ -71,6 +80,12 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - restohub_network
+
+  # ---------------------------------------------------------------------------
+  # Order Service
+  # ---------------------------------------------------------------------------
 
   order_service:
     build: ./services/order_service
@@ -86,6 +101,32 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - restohub_network
+
+  order_consumer:
+    build: ./services/order_service
+    command: >
+      sh -c "python manage.py declare_queues &&
+             python manage.py consume_order_events"
+    volumes:
+      - ./services/order_service:/app
+    env_file:
+      - ./services/order_service/.env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      order_service:
+        condition: service_started
+    networks:
+      - restohub_network
+
+  # ---------------------------------------------------------------------------
+  # Inventory Service
+  # ---------------------------------------------------------------------------
 
   inventory_service:
     build: ./services/inventory_service
@@ -101,9 +142,14 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - restohub_network
+
   inventory_consumer:
     build: ./services/inventory_service
-    command: python manage.py consume_inventory_events
+    command: >
+      sh -c "python manage.py declare_queues &&
+             python manage.py consume_inventory_events"
     volumes:
       - ./services/inventory_service:/app
     env_file:
@@ -116,8 +162,11 @@ services:
         condition: service_healthy
       inventory_service:
         condition: service_started
+    networks:
+      - restohub_network
+
   # ---------------------------------------------------------------------------
-  # Nuevos servicios
+  # Loyalty Service
   # ---------------------------------------------------------------------------
 
   loyalty_service:
@@ -136,10 +185,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - restohub_network
 
   loyalty_consumer:
     build: ./services/loyalty_service
-    command: python manage.py consume_loyalty_events
+    command: >
+      sh -c "python manage.py declare_queues &&
+             python manage.py consume_loyalty_events"
     volumes:
       - ./services/loyalty_service:/app
     env_file:
@@ -152,6 +205,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - restohub_network
+
+  # ---------------------------------------------------------------------------
+  # Staff Service
+  # ---------------------------------------------------------------------------
 
   staff_service:
     build: ./services/staff_service
@@ -167,10 +226,14 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - restohub_network
 
   staff_consumer:
     build: ./services/staff_service
-    command: python manage.py consume_staff_events
+    command: >
+      sh -c "python manage.py declare_queues &&
+             python manage.py consume_staff_events"
     volumes:
       - ./services/staff_service:/app
     env_file:
@@ -183,6 +246,9 @@ services:
         condition: service_healthy
       staff_service:
         condition: service_started
+    networks:
+      - restohub_network
+
   # ---------------------------------------------------------------------------
   # Gateway
   # ---------------------------------------------------------------------------
@@ -206,7 +272,21 @@ services:
       - inventory_service
       - loyalty_service
       - staff_service
+    networks:
+      - restohub_network
+
+# ---------------------------------------------------------------------------
+# Volúmenes
+# ---------------------------------------------------------------------------
 
 volumes:
   postgres_data:
   redis_data:
+
+# ---------------------------------------------------------------------------
+# Red compartida
+# ---------------------------------------------------------------------------
+
+networks:
+  restohub_network:
+    driver: bridge
