@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/services/inventory/mutations.py
 import graphene
 from .types import ProveedorType, AlmacenType, StockType, LoteType, OrdenCompraType, AlertaType
 from .queries import _map_stock, _map_orden

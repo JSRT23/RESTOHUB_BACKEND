@@ -436,8 +436,9 @@ class EstacionCocinaViewSet(viewsets.ModelViewSet):
 # Read-only desde la API — se crea/actualiza vía consumer RabbitMQ.
 # ---------------------------------------------------------------------------
 
-class AsignacionCocinaViewSet(viewsets.ReadOnlyModelViewSet):
-    http_method_names = ["get", "head", "options"]
+# ✅ ModelViewSet
+class AsignacionCocinaViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
         qs = AsignacionCocina.objects.select_related(
@@ -468,10 +469,34 @@ class AsignacionCocinaViewSet(viewsets.ReadOnlyModelViewSet):
             return AsignacionCocinaListSerializer
         return AsignacionCocinaSerializer
 
+    @action(detail=True, methods=["post"])
+    def completar(self, request, pk=None):
+        """
+        POST /asignaciones-cocina/{id}/completar/
+
+        El cocinero marca la asignación como terminada.
+        Esto dispara el signal que publica cocina.asignacion.completada,
+        que a su vez mueve el pedido a LISTO en order_service.
+        """
+        asignacion = self.get_object()
+
+        if asignacion.completado_en:
+            return Response(
+                {"detail": "Esta asignación ya fue completada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        asignacion.completado_en = timezone.now()
+        asignacion.sla_segundos = asignacion.calcular_sla()
+        # ✅ save() dispara el signal → publica cocina.asignacion.completada
+        asignacion.save(update_fields=["completado_en", "sla_segundos"])
+
+        return Response(AsignacionCocinaSerializer(asignacion).data)
 
 # ---------------------------------------------------------------------------
 # ServicioEntrega
 # ---------------------------------------------------------------------------
+
 
 class ServicioEntregaViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ServicioEntregaSerializer
