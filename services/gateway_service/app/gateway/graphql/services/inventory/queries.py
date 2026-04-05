@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/services/inventory/queries.py
 import graphene
 from .types import (
     ProveedorType, AlmacenType, StockType, LoteType,

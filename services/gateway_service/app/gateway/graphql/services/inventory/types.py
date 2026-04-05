@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/services/inventory/types.py
 import graphene
 
 

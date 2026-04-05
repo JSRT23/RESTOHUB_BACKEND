@@ -25,11 +25,12 @@ from .serializers import (
     RecetaPlatoSerializer,
 )
 from .events.event_types import InventoryEvents
-from app.inventory.infrastructure.messaging.publisher import EventPublisher
+from .events.builders import InventoryEventBuilder
+from app.inventory.infrastructure.messaging.publisher import get_publisher  # ✅ singleton
 
 
 # ─────────────────────────────────────────
-# 🔧 Helper — crear movimiento
+# HELPERS
 # ─────────────────────────────────────────
 
 def _crear_movimiento(inv, tipo, cantidad, descripcion):
@@ -51,45 +52,59 @@ def _crear_movimiento(inv, tipo, cantidad, descripcion):
         descripcion=descripcion,
     )
 
-    # 🔥 EVENTO
-    publisher = EventPublisher()
-    publisher.publish(InventoryEvents.STOCK_ACTUALIZADO, {
-        "ingrediente_id": str(inv.ingrediente_id),
-        "almacen_id": str(inv.almacen_id),
-        "restaurante_id": str(inv.almacen.restaurante_id),
-        "cantidad_anterior": str(cantidad_antes),
-        "cantidad_nueva": str(inv.cantidad_actual),
-        "unidad_medida": inv.unidad_medida,
-        "tipo_movimiento": tipo,
-    })
-    publisher.close()
+    # ✅ get_publisher() — singleton, sin close()
+    get_publisher().publish(
+        InventoryEvents.STOCK_ACTUALIZADO,
+        InventoryEventBuilder.stock_actualizado(
+            ingrediente_id=inv.ingrediente_id,
+            almacen_id=inv.almacen_id,
+            restaurante_id=inv.almacen.restaurante_id,
+            cantidad_anterior=cantidad_antes,
+            cantidad_nueva=inv.cantidad_actual,
+            unidad_medida=inv.unidad_medida,
+            tipo_movimiento=tipo,
+        )
+    )
 
 
 def _verificar_alertas(inv):
+    """
+    Crea AlertaStock si aplica.
+    Idempotente: no duplica si ya existe una PENDIENTE del mismo tipo.
+    """
+    from .models import TipoAlerta, EstadoAlerta
+
     if inv.esta_agotado:
-        AlertaStock.objects.create(
-            ingrediente_inventario=inv,
-            almacen=inv.almacen,
-            restaurante_id=inv.almacen.restaurante_id,
-            ingrediente_id=inv.ingrediente_id,
-            tipo_alerta="AGOTADO",
-            nivel_actual=inv.cantidad_actual,
-            nivel_minimo=inv.nivel_minimo,
-        )
+        tipo = TipoAlerta.AGOTADO
     elif inv.necesita_reposicion:
-        AlertaStock.objects.create(
-            ingrediente_inventario=inv,
-            almacen=inv.almacen,
-            restaurante_id=inv.almacen.restaurante_id,
-            ingrediente_id=inv.ingrediente_id,
-            tipo_alerta="STOCK_BAJO",
-            nivel_actual=inv.cantidad_actual,
-            nivel_minimo=inv.nivel_minimo,
-        )
+        tipo = TipoAlerta.STOCK_BAJO
+    else:
+        return
+
+    # ✅ No duplicar alertas pendientes
+    ya_existe = AlertaStock.objects.filter(
+        ingrediente_id=inv.ingrediente_id,
+        restaurante_id=inv.almacen.restaurante_id,
+        tipo_alerta=tipo,
+        estado=EstadoAlerta.PENDIENTE,
+    ).exists()
+
+    if ya_existe:
+        return
+
+    AlertaStock.objects.create(
+        ingrediente_inventario=inv,
+        almacen=inv.almacen,
+        restaurante_id=inv.almacen.restaurante_id,
+        ingrediente_id=inv.ingrediente_id,
+        tipo_alerta=tipo,
+        nivel_actual=inv.cantidad_actual,
+        nivel_minimo=inv.nivel_minimo,
+    )
 
 
 # ─────────────────────────────────────────
-# 🧑‍🌾 PROVEEDOR
+# PROVEEDOR
 # ─────────────────────────────────────────
 
 class ProveedorViewSet(viewsets.ModelViewSet):
@@ -112,7 +127,7 @@ class ProveedorViewSet(viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────
-# 🏪 ALMACÉN
+# ALMACÉN
 # ─────────────────────────────────────────
 
 class AlmacenViewSet(viewsets.ModelViewSet):
@@ -148,7 +163,7 @@ class AlmacenViewSet(viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────
-# 📦 INGREDIENTE INVENTARIO
+# INGREDIENTE INVENTARIO
 # ─────────────────────────────────────────
 
 class IngredienteInventarioViewSet(viewsets.ModelViewSet):
@@ -160,7 +175,6 @@ class IngredienteInventarioViewSet(viewsets.ModelViewSet):
         ).prefetch_related("movimientos")
 
         almacen_id = self.request.query_params.get("almacen_id")
-
         if almacen_id:
             qs = qs.filter(almacen_id=almacen_id)
 
@@ -173,8 +187,6 @@ class IngredienteInventarioViewSet(viewsets.ModelViewSet):
             return IngredienteInventarioWriteSerializer
         if self.action == "partial_update":
             return IngredienteInventarioNivelesSerializer
-        if self.action == "ajustar":
-            return AjusteStockSerializer
         return IngredienteInventarioSerializer
 
     @action(detail=True, methods=["post"])
@@ -189,41 +201,20 @@ class IngredienteInventarioViewSet(viewsets.ModelViewSet):
 
         if inv.cantidad_actual + cantidad < 0:
             return Response(
-                {"detail": "Stock no puede quedar negativo"},
+                {"detail": "Stock no puede quedar negativo."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
-            cantidad_antes = inv.cantidad_actual
-            inv.cantidad_actual += cantidad
-            inv.save(update_fields=["cantidad_actual", "fecha_actualizacion"])
-
-            MovimientoInventario.objects.create(
-                ingrediente_inventario=inv,
-                tipo_movimiento="AJUSTE",
-                cantidad=abs(cantidad),
-                cantidad_antes=cantidad_antes,
-                cantidad_despues=inv.cantidad_actual,
-                descripcion=descripcion,
-            )
-
-            publish_event(InventoryEvents.STOCK_ACTUALIZADO, {
-                "ingrediente_id": str(inv.ingrediente_id),
-                "almacen_id": str(inv.almacen_id),
-                "restaurante_id": str(inv.almacen.restaurante_id),
-                "cantidad_anterior": str(cantidad_antes),
-                "cantidad_nueva": str(inv.cantidad_actual),
-                "unidad_medida": inv.unidad_medida,
-                "tipo_movimiento": "AJUSTE",
-            })
-
+            _crear_movimiento(inv, "AJUSTE", abs(cantidad),
+                              descripcion)   # ✅ corregido
             _verificar_alertas(inv)
 
         return Response(IngredienteInventarioSerializer(inv).data)
 
 
 # ─────────────────────────────────────────
-# 📦 LOTE
+# LOTE
 # ─────────────────────────────────────────
 
 class LoteIngredienteViewSet(viewsets.ModelViewSet):
@@ -246,15 +237,16 @@ class LoteIngredienteViewSet(viewsets.ModelViewSet):
             almacen=lote.almacen,
             defaults={
                 "nombre_ingrediente": f"Ingrediente {lote.ingrediente_id}",
-                "unidad_medida": lote.unidad_medida,
+                "unidad_medida":      lote.unidad_medida,
             }
         )
 
-        _crear_movimiento(inv, "ENTRADA", lote.cantidad_recibida, "Nuevo lote")
+        _crear_movimiento(
+            inv, "ENTRADA", lote.cantidad_recibida, "Nuevo lote recibido")
 
 
 # ─────────────────────────────────────────
-# 📑 ORDEN COMPRA
+# ORDEN COMPRA
 # ─────────────────────────────────────────
 
 class OrdenCompraViewSet(viewsets.ModelViewSet):
@@ -274,7 +266,10 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         orden = self.get_object()
 
         if orden.estado != "ENVIADA":
-            return Response({"detail": "Orden no válida"}, status=400)
+            return Response(
+                {"detail": "Solo se pueden recibir órdenes en estado ENVIADA."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         orden.estado = "RECIBIDA"
         orden.fecha_recepcion = timezone.now()
@@ -284,17 +279,75 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────
-# 🚨 ALERTAS
+# ALERTAS
 # ─────────────────────────────────────────
 
 class AlertaStockViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AlertaStockSerializer
 
     def get_queryset(self):
-        return AlertaStock.objects.all().order_by("-fecha_alerta")
+        qs = AlertaStock.objects.all()
+
+        restaurante_id = self.request.query_params.get("restaurante_id")
+        tipo = self.request.query_params.get("tipo")
+        estado = self.request.query_params.get("estado")
+
+        if restaurante_id:
+            qs = qs.filter(restaurante_id=restaurante_id)
+        if tipo:
+            qs = qs.filter(tipo_alerta=tipo)
+        if estado:
+            qs = qs.filter(estado=estado)
+
+        return qs.order_by("-fecha_alerta")
 
     @action(detail=True, methods=["post"])
     def resolver(self, request, pk=None):
         alerta = self.get_object()
         alerta.resolver()
         return Response(AlertaStockSerializer(alerta).data)
+
+
+# ─────────────────────────────────────────
+# MOVIMIENTOS (audit log — solo lectura)
+# ─────────────────────────────────────────
+
+class MovimientoInventarioViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = MovimientoInventarioSerializer
+
+    def get_queryset(self):
+        qs = MovimientoInventario.objects.select_related(
+            "ingrediente_inventario", "lote"
+        )
+
+        ingrediente_id = self.request.query_params.get("ingrediente_id")
+        tipo = self.request.query_params.get("tipo")
+        fecha_desde = self.request.query_params.get("fecha_desde")
+
+        if ingrediente_id:
+            qs = qs.filter(
+                ingrediente_inventario__ingrediente_id=ingrediente_id
+            )
+        if tipo:
+            qs = qs.filter(tipo_movimiento=tipo)
+        if fecha_desde:
+            qs = qs.filter(fecha__date__gte=fecha_desde)
+
+        return qs.order_by("-fecha")
+
+
+# ─────────────────────────────────────────
+# RECETAS (solo lectura — se sincronizan vía RabbitMQ)
+# ─────────────────────────────────────────
+
+class RecetaPlatoViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = RecetaPlatoSerializer
+
+    def get_queryset(self):
+        qs = RecetaPlato.objects.all()
+
+        plato_id = self.request.query_params.get("plato_id")
+        if plato_id:
+            qs = qs.filter(plato_id=plato_id)
+
+        return qs.order_by("nombre_ingrediente")
