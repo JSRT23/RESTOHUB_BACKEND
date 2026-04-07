@@ -1,40 +1,31 @@
+# gateway_service/app/gateway/graphql/services/staff/queries.py
 import graphene
-
-from ....client import staff_client
 from .types import (
-    AlertaOperacionalType,
-    AsignacionCocinaType,
-    ConfigLaboralType,
-    EmpleadoType,
-    EstacionCocinaType,
-    PrediccionPersonalType,
-    RegistroAsistenciaType,
-    RepartidorDisponibleType,
-    ResumenNominaType,
-    RestauranteStaffType,
-    ServicioEntregaType,
-    TurnoType,
+    AlertaOperacionalType, AsignacionCocinaType,
+    ConfigLaboralType, EmpleadoType, EstacionCocinaType,
+    PrediccionPersonalType, RegistroAsistenciaType,
+    RepartidorDisponibleType, ResumenNominaType,
+    RestauranteStaffType, ServicioEntregaType, TurnoType,
 )
+from ....client import staff_client
 
 
-def _build(tipo, data):
-    """Instancia un ObjectType desde un dict. Retorna None si data es None."""
-    if not data:
-        return None
-    return tipo(**{k: v for k, v in data.items() if hasattr(tipo, k)})
-
-
-def _build_list(tipo, data):
-    if not data:
-        return []
-    items = data.get("results", data) if isinstance(data, dict) else data
-    return [_build(tipo, item) for item in items if item]
+# ─────────────────────────────────────────
+# NOTA
+# ─────────────────────────────────────────
+# Retornamos dicts crudos directamente.
+# graphene resuelve cada campo buscando root.get(field_name).
+# No se necesita _build() ni instanciar ObjectType manualmente.
+#
+# La API retorna listas directas (no paginadas con "results").
+# Si en algún momento se agrega paginación, solo hay que cambiar
+# el resolver correspondiente.
+# ─────────────────────────────────────────
 
 
 class StaffQuery(graphene.ObjectType):
 
-    # ── Restaurantes ─────────────────────────────────────────────────────────
-
+    # Restaurantes
     restaurantes_staff = graphene.List(
         RestauranteStaffType,
         pais=graphene.String(),
@@ -49,8 +40,7 @@ class StaffQuery(graphene.ObjectType):
         restaurante_id=graphene.ID(required=True),
     )
 
-    # ── Empleados ────────────────────────────────────────────────────────────
-
+    # Empleados
     empleados = graphene.List(
         EmpleadoType,
         restaurante_id=graphene.ID(),
@@ -62,8 +52,7 @@ class StaffQuery(graphene.ObjectType):
         empleado_id=graphene.ID(required=True),
     )
 
-    # ── Turnos ───────────────────────────────────────────────────────────────
-
+    # Turnos
     turnos = graphene.List(
         TurnoType,
         empleado_id=graphene.ID(),
@@ -72,13 +61,9 @@ class StaffQuery(graphene.ObjectType):
         fecha_desde=graphene.String(),
         fecha_hasta=graphene.String(),
     )
-    turno = graphene.Field(
-        TurnoType,
-        turno_id=graphene.ID(required=True),
-    )
+    turno = graphene.Field(TurnoType, turno_id=graphene.ID(required=True))
 
-    # ── Asistencia ───────────────────────────────────────────────────────────
-
+    # Asistencia
     asistencia = graphene.List(
         RegistroAsistenciaType,
         empleado_id=graphene.ID(),
@@ -87,8 +72,7 @@ class StaffQuery(graphene.ObjectType):
         fecha_hasta=graphene.String(),
     )
 
-    # ── Cocina ───────────────────────────────────────────────────────────────
-
+    # Cocina
     estaciones = graphene.List(
         EstacionCocinaType,
         restaurante_id=graphene.ID(),
@@ -102,8 +86,7 @@ class StaffQuery(graphene.ObjectType):
         sin_completar=graphene.Boolean(),
     )
 
-    # ── Entregas ─────────────────────────────────────────────────────────────
-
+    # Entregas
     entregas = graphene.List(
         ServicioEntregaType,
         repartidor_id=graphene.ID(),
@@ -114,9 +97,8 @@ class StaffQuery(graphene.ObjectType):
         restaurante_id=graphene.ID(),
     )
 
-    # ── Alertas ──────────────────────────────────────────────────────────────
-
-    alertas = graphene.List(
+    # Alertas
+    alertas_operacionales = graphene.List(
         AlertaOperacionalType,
         restaurante_id=graphene.ID(),
         nivel=graphene.String(),
@@ -124,8 +106,7 @@ class StaffQuery(graphene.ObjectType):
         resuelta=graphene.Boolean(),
     )
 
-    # ── Nómina ───────────────────────────────────────────────────────────────
-
+    # Nómina
     nomina = graphene.List(
         ResumenNominaType,
         empleado_id=graphene.ID(),
@@ -133,8 +114,7 @@ class StaffQuery(graphene.ObjectType):
         cerrado=graphene.Boolean(),
     )
 
-    # ── Predicción ───────────────────────────────────────────────────────────
-
+    # Predicción
     predicciones = graphene.List(
         PrediccionPersonalType,
         restaurante_id=graphene.ID(),
@@ -146,109 +126,95 @@ class StaffQuery(graphene.ObjectType):
         restaurante_id=graphene.ID(required=True),
     )
 
-    # =========================================================================
-    # Resolvers
-    # =========================================================================
+    # ── Resolvers ─────────────────────────────────────────────────────────
 
     def resolve_restaurantes_staff(self, info, pais=None, activo=None):
-        data = staff_client.get_restaurantes(pais=pais, activo=activo)
-        return _build_list(RestauranteStaffType, data)
+        return staff_client.get_restaurantes(pais=pais, activo=activo) or []
 
     def resolve_restaurante_staff(self, info, restaurante_id):
-        data = staff_client.get_restaurante(restaurante_id)
-        return _build(RestauranteStaffType, data)
+        return staff_client.get_restaurante(restaurante_id)
 
     def resolve_config_laboral(self, info, restaurante_id):
-        data = staff_client.get_config_laboral(restaurante_id)
-        return _build(ConfigLaboralType, data)
+        return staff_client.get_config_laboral(restaurante_id)
 
     def resolve_empleados(self, info, restaurante_id=None, rol=None, activo=None):
-        data = staff_client.get_empleados(
+        return staff_client.get_empleados(
             restaurante_id=restaurante_id, rol=rol, activo=activo
-        )
-        return _build_list(EmpleadoType, data)
+        ) or []
 
     def resolve_empleado(self, info, empleado_id):
-        data = staff_client.get_empleado(empleado_id)
-        return _build(EmpleadoType, data)
+        return staff_client.get_empleado(empleado_id)
 
     def resolve_turnos(self, info, empleado_id=None, restaurante_id=None,
                        estado=None, fecha_desde=None, fecha_hasta=None):
-        data = staff_client.get_turnos(
+        return staff_client.get_turnos(
             empleado_id=empleado_id,
             restaurante_id=restaurante_id,
             estado=estado,
             fecha_desde=fecha_desde,
             fecha_hasta=fecha_hasta,
-        )
-        return _build_list(TurnoType, data)
+        ) or []
 
     def resolve_turno(self, info, turno_id):
-        data = staff_client.get_turno(turno_id)
-        return _build(TurnoType, data)
+        return staff_client.get_turno(turno_id)
 
     def resolve_asistencia(self, info, empleado_id=None, restaurante_id=None,
                            fecha_desde=None, fecha_hasta=None):
-        data = staff_client.get_asistencia(
+        return staff_client.get_asistencia(
             empleado_id=empleado_id,
             restaurante_id=restaurante_id,
             fecha_desde=fecha_desde,
             fecha_hasta=fecha_hasta,
-        )
-        return _build_list(RegistroAsistenciaType, data)
+        ) or []
 
     def resolve_estaciones(self, info, restaurante_id=None, activa=None):
-        data = staff_client.get_estaciones(
-            restaurante_id=restaurante_id, activa=activa)
-        return _build_list(EstacionCocinaType, data)
+        return staff_client.get_estaciones(
+            restaurante_id=restaurante_id, activa=activa
+        ) or []
 
-    def resolve_asignaciones_cocina(self, info, restaurante_id=None, cocinero_id=None,
-                                    fecha_desde=None, sin_completar=None):
-        data = staff_client.get_asignaciones_cocina(
+    def resolve_asignaciones_cocina(self, info, restaurante_id=None,
+                                    cocinero_id=None, fecha_desde=None,
+                                    sin_completar=None):
+        return staff_client.get_asignaciones_cocina(
             restaurante_id=restaurante_id,
             cocinero_id=cocinero_id,
             fecha_desde=fecha_desde,
             sin_completar=sin_completar,
-        )
-        return _build_list(AsignacionCocinaType, data)
+        ) or []
 
     def resolve_entregas(self, info, repartidor_id=None, estado=None):
-        data = staff_client.get_entregas(
-            repartidor_id=repartidor_id, estado=estado)
-        return _build_list(ServicioEntregaType, data)
+        return staff_client.get_entregas(
+            repartidor_id=repartidor_id, estado=estado
+        ) or []
 
     def resolve_repartidores_disponibles(self, info, restaurante_id=None):
-        data = staff_client.get_repartidores_disponibles(
-            restaurante_id=restaurante_id)
-        return _build_list(RepartidorDisponibleType, data)
+        return staff_client.get_repartidores_disponibles(
+            restaurante_id=restaurante_id
+        ) or []
 
-    def resolve_alertas(self, info, restaurante_id=None, nivel=None,
-                        tipo=None, resuelta=None):
-        data = staff_client.get_alertas(
+    def resolve_alertas_operacionales(self, info, restaurante_id=None,
+                                      nivel=None, tipo=None, resuelta=None):
+        return staff_client.get_alertas(
             restaurante_id=restaurante_id,
             nivel=nivel,
             tipo=tipo,
             resuelta=resuelta,
-        )
-        return _build_list(AlertaOperacionalType, data)
+        ) or []
 
     def resolve_nomina(self, info, empleado_id=None, restaurante_id=None, cerrado=None):
-        data = staff_client.get_nomina(
+        return staff_client.get_nomina(
             empleado_id=empleado_id,
             restaurante_id=restaurante_id,
             cerrado=cerrado,
-        )
-        return _build_list(ResumenNominaType, data)
+        ) or []
 
     def resolve_predicciones(self, info, restaurante_id=None,
                              fecha_desde=None, fecha_hasta=None):
-        data = staff_client.get_predicciones(
+        return staff_client.get_predicciones(
             restaurante_id=restaurante_id,
             fecha_desde=fecha_desde,
             fecha_hasta=fecha_hasta,
-        )
-        return _build_list(PrediccionPersonalType, data)
+        ) or []
 
     def resolve_prediccion_semana(self, info, restaurante_id):
-        data = staff_client.get_prediccion_semana(restaurante_id)
-        return _build_list(PrediccionPersonalType, data)
+        return staff_client.get_prediccion_semana(restaurante_id) or []

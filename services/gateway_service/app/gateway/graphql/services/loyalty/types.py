@@ -1,3 +1,4 @@
+# gateway/graphql/services/loyalty/types.py
 import graphene
 
 

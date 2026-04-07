@@ -1,5 +1,5 @@
+# gateway_service/app/gateway/graphql/services/staff/mutations.py
 import graphene
-
 from ....client import staff_client
 from .types import (
     AlertaOperacionalType,
@@ -12,15 +12,9 @@ from .types import (
 )
 
 
-def _build(tipo, data):
-    if not data:
-        return None
-    return tipo(**{k: v for k, v in data.items() if hasattr(tipo, k)})
-
-
-# ---------------------------------------------------------------------------
-# Empleados
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# EMPLEADOS
+# ─────────────────────────────────────────
 
 class CrearEmpleado(graphene.Mutation):
     class Arguments:
@@ -42,7 +36,7 @@ class CrearEmpleado(graphene.Mutation):
         data = staff_client.crear_empleado(kwargs)
         if not data:
             return CrearEmpleado(ok=False, errores="Error al crear el empleado.")
-        return CrearEmpleado(empleado=_build(EmpleadoType, data), ok=True)
+        return CrearEmpleado(ok=True, empleado=data)  # ✅ dict crudo
 
 
 class EditarEmpleado(graphene.Mutation):
@@ -59,10 +53,11 @@ class EditarEmpleado(graphene.Mutation):
     errores = graphene.String()
 
     def mutate(self, info, empleado_id, **kwargs):
-        data = staff_client.editar_empleado(empleado_id, kwargs)
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        data = staff_client.editar_empleado(empleado_id, payload)
         if not data:
             return EditarEmpleado(ok=False, errores="Error al editar el empleado.")
-        return EditarEmpleado(empleado=_build(EmpleadoType, data), ok=True)
+        return EditarEmpleado(ok=True, empleado=data)  # ✅
 
 
 class DesactivarEmpleado(graphene.Mutation):
@@ -77,12 +72,12 @@ class DesactivarEmpleado(graphene.Mutation):
         data = staff_client.desactivar_empleado(empleado_id)
         if not data:
             return DesactivarEmpleado(ok=False, errores="Error al desactivar el empleado.")
-        return DesactivarEmpleado(empleado=_build(EmpleadoType, data), ok=True)
+        return DesactivarEmpleado(ok=True, empleado=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Turnos
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# TURNOS
+# ─────────────────────────────────────────
 
 class CrearTurno(graphene.Mutation):
     class Arguments:
@@ -100,7 +95,7 @@ class CrearTurno(graphene.Mutation):
         data = staff_client.crear_turno(kwargs)
         if not data:
             return CrearTurno(ok=False, errores="Error al crear el turno.")
-        return CrearTurno(turno=_build(TurnoType, data), ok=True)
+        return CrearTurno(ok=True, turno=data)  # ✅
 
 
 class IniciarTurno(graphene.Mutation):
@@ -115,7 +110,7 @@ class IniciarTurno(graphene.Mutation):
         data = staff_client.iniciar_turno(turno_id)
         if not data:
             return IniciarTurno(ok=False, errores="Error al iniciar el turno.")
-        return IniciarTurno(turno=_build(TurnoType, data), ok=True)
+        return IniciarTurno(ok=True, turno=data)  # ✅
 
 
 class CancelarTurno(graphene.Mutation):
@@ -130,12 +125,12 @@ class CancelarTurno(graphene.Mutation):
         data = staff_client.cancelar_turno(turno_id)
         if not data:
             return CancelarTurno(ok=False, errores="Error al cancelar el turno.")
-        return CancelarTurno(turno=_build(TurnoType, data), ok=True)
+        return CancelarTurno(ok=True, turno=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Asistencia
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# ASISTENCIA
+# ─────────────────────────────────────────
 
 class RegistrarEntrada(graphene.Mutation):
     class Arguments:
@@ -155,7 +150,7 @@ class RegistrarEntrada(graphene.Mutation):
         )
         if not data:
             return RegistrarEntrada(ok=False, errores="QR inválido o error al registrar entrada.")
-        return RegistrarEntrada(registro=_build(RegistroAsistenciaType, data), ok=True)
+        return RegistrarEntrada(ok=True, registro=data)  # ✅
 
 
 class RegistrarSalida(graphene.Mutation):
@@ -170,12 +165,12 @@ class RegistrarSalida(graphene.Mutation):
         data = staff_client.registrar_salida(turno_id)
         if not data:
             return RegistrarSalida(ok=False, errores="Error al registrar salida.")
-        return RegistrarSalida(registro=_build(RegistroAsistenciaType, data), ok=True)
+        return RegistrarSalida(ok=True, registro=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Estaciones de cocina
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# ESTACIONES DE COCINA
+# ─────────────────────────────────────────
 
 class CrearEstacion(graphene.Mutation):
     class Arguments:
@@ -191,12 +186,36 @@ class CrearEstacion(graphene.Mutation):
         data = staff_client.crear_estacion(kwargs)
         if not data:
             return CrearEstacion(ok=False, errores="Error al crear la estación.")
-        return CrearEstacion(estacion=_build(EstacionCocinaType, data), ok=True)
+        return CrearEstacion(ok=True, estacion=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Alertas
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# COMPLETAR ASIGNACIÓN DE COCINA
+# ─────────────────────────────────────────
+
+class CompletarAsignacionCocina(graphene.Mutation):
+    """
+    El cocinero marca su asignación como completada.
+    Dispara el signal → publica cocina.asignacion.completada
+    → order_service mueve el pedido a LISTO.
+    """
+    class Arguments:
+        asignacion_id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    errores = graphene.String()
+
+    def mutate(self, info, asignacion_id):
+        from ....client.staff_client import _post
+        data = _post(f"/asignaciones-cocina/{asignacion_id}/completar/")
+        if not data:
+            return CompletarAsignacionCocina(ok=False, errores="Error al completar asignación.")
+        return CompletarAsignacionCocina(ok=True)
+
+
+# ─────────────────────────────────────────
+# ALERTAS
+# ─────────────────────────────────────────
 
 class ResolverAlerta(graphene.Mutation):
     class Arguments:
@@ -210,12 +229,12 @@ class ResolverAlerta(graphene.Mutation):
         data = staff_client.resolver_alerta(alerta_id)
         if not data:
             return ResolverAlerta(ok=False, errores="Error al resolver la alerta.")
-        return ResolverAlerta(alerta=_build(AlertaOperacionalType, data), ok=True)
+        return ResolverAlerta(ok=True, alerta=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Nómina
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# NÓMINA
+# ─────────────────────────────────────────
 
 class GenerarNomina(graphene.Mutation):
     class Arguments:
@@ -244,9 +263,9 @@ class GenerarNomina(graphene.Mutation):
         if data is None:
             return GenerarNomina(ok=False, errores="Error al generar nómina.")
 
-        items = data if isinstance(data, list) else data.get("results", [])
-        resumenes = [_build(ResumenNominaType, r) for r in items if r]
-        return GenerarNomina(resumenes=resumenes, ok=True)
+        # La API retorna lista directa (no paginada)
+        items = data if isinstance(data, list) else []
+        return GenerarNomina(ok=True, resumenes=items)  # ✅ dicts crudos
 
 
 class CerrarNomina(graphene.Mutation):
@@ -261,12 +280,12 @@ class CerrarNomina(graphene.Mutation):
         data = staff_client.cerrar_nomina(resumen_id)
         if not data:
             return CerrarNomina(ok=False, errores="Error al cerrar el período.")
-        return CerrarNomina(resumen=_build(ResumenNominaType, data), ok=True)
+        return CerrarNomina(ok=True, resumen=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Predicción de personal
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# PREDICCIÓN DE PERSONAL
+# ─────────────────────────────────────────
 
 class CrearPrediccion(graphene.Mutation):
     class Arguments:
@@ -285,12 +304,12 @@ class CrearPrediccion(graphene.Mutation):
         data = staff_client.crear_prediccion(kwargs)
         if not data:
             return CrearPrediccion(ok=False, errores="Error al crear la predicción.")
-        return CrearPrediccion(prediccion=_build(PrediccionPersonalType, data), ok=True)
+        return CrearPrediccion(ok=True, prediccion=data)  # ✅
 
 
-# ---------------------------------------------------------------------------
-# Mutation raíz del servicio
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
+# REGISTRO
+# ─────────────────────────────────────────
 
 class StaffMutation(graphene.ObjectType):
     # Empleados
@@ -309,6 +328,7 @@ class StaffMutation(graphene.ObjectType):
 
     # Cocina
     crear_estacion = CrearEstacion.Field()
+    completar_asignacion_cocina = CompletarAsignacionCocina.Field()
 
     # Alertas
     resolver_alerta = ResolverAlerta.Field()
