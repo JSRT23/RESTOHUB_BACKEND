@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django_filters.rest_framework import DjangoFilterBackend
 
 from app.menu.events.event_types import MenuEvents
 from app.menu.events.builders import MenuEventBuilder
@@ -31,25 +32,35 @@ class RestauranteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     serializer_class = RestauranteSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
 
+    # 🔥 FILTROS ACTIVADOS
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["activo", "pais"]
+
     def perform_create(self, serializer):
         instance = serializer.save()
-        self.publicar_evento(MenuEvents.RESTAURANTE_CREADO,
-                             MenuEventBuilder.restaurante_creado(instance))
+        self.publicar_evento(
+            MenuEvents.RESTAURANTE_CREADO,
+            MenuEventBuilder.restaurante_creado(instance)
+        )
 
     def perform_update(self, serializer):
         instance = serializer.save()
         cambios = {field: getattr(instance, field)
                    for field in serializer.validated_data}
-        self.publicar_evento(MenuEvents.RESTAURANTE_ACTUALIZADO,
-                             MenuEventBuilder.restaurante_actualizado(instance, cambios))
+        self.publicar_evento(
+            MenuEvents.RESTAURANTE_ACTUALIZADO,
+            MenuEventBuilder.restaurante_actualizado(instance, cambios)
+        )
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
         obj = self.get_object()
         obj.activo = True
         obj.save()
-        self.publicar_evento(MenuEvents.RESTAURANTE_ACTUALIZADO,
-                             MenuEventBuilder.restaurante_actualizado(obj, {"activo": True}))
+        self.publicar_evento(
+            MenuEvents.RESTAURANTE_ACTUALIZADO,
+            MenuEventBuilder.restaurante_actualizado(obj, {"activo": True})
+        )
         return Response({"detail": "Restaurante activado."})
 
     @action(detail=True, methods=["post"])
@@ -57,8 +68,10 @@ class RestauranteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
         obj = self.get_object()
         obj.activo = False
         obj.save()
-        self.publicar_evento(MenuEvents.RESTAURANTE_DESACTIVADO,
-                             MenuEventBuilder.restaurante_desactivado(obj))
+        self.publicar_evento(
+            MenuEvents.RESTAURANTE_DESACTIVADO,
+            MenuEventBuilder.restaurante_desactivado(obj)
+        )
         return Response({"detail": "Restaurante desactivado."})
 
 # ─────────────────────────────────────────

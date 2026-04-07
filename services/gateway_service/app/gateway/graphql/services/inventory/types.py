@@ -1,4 +1,4 @@
-# gateway_service/app/gateway/services/inventory/types.py
+# gateway_service/app/gateway/graphql/services/inventory/types.py
 import graphene
 
 
@@ -21,12 +21,13 @@ class AlmacenType(graphene.ObjectType):
     nombre = graphene.String()
     descripcion = graphene.String()
     activo = graphene.Boolean()
-    fecha_creacion = graphene.String()
     total_ingredientes = graphene.Int()
     ingredientes_bajo_minimo = graphene.Int()
+    fecha_creacion = graphene.String()
+    fecha_actualizacion = graphene.String()
 
 
-class MovimientoInventarioType(graphene.ObjectType):
+class MovimientoType(graphene.ObjectType):
     id = graphene.ID()
     tipo_movimiento = graphene.String()
     cantidad = graphene.String()
@@ -52,7 +53,10 @@ class StockType(graphene.ObjectType):
     esta_agotado = graphene.Boolean()
     porcentaje_stock = graphene.Float()
     fecha_actualizacion = graphene.String()
-    movimientos = graphene.List(MovimientoInventarioType)
+    movimientos = graphene.List(MovimientoType)
+
+    def resolve_movimientos(root, info):
+        return root.get("movimientos", []) if isinstance(root, dict) else []
 
 
 class LoteType(graphene.ObjectType):
@@ -74,7 +78,7 @@ class LoteType(graphene.ObjectType):
     fecha_recepcion = graphene.String()
 
 
-class DetalleOrdenCompraType(graphene.ObjectType):
+class DetalleOrdenType(graphene.ObjectType):
     id = graphene.ID()
     ingrediente_id = graphene.ID()
     nombre_ingrediente = graphene.String()
@@ -97,10 +101,13 @@ class OrdenCompraType(graphene.ObjectType):
     fecha_entrega_estimada = graphene.String()
     fecha_recepcion = graphene.String()
     notas = graphene.String()
-    detalles = graphene.List(DetalleOrdenCompraType)
+    detalles = graphene.List(DetalleOrdenType)
+
+    def resolve_detalles(root, info):
+        return root.get("detalles", []) if isinstance(root, dict) else []
 
 
-class AlertaType(graphene.ObjectType):
+class AlertaStockType(graphene.ObjectType):
     id = graphene.ID()
     tipo_alerta = graphene.String()
     estado = graphene.String()
@@ -111,23 +118,18 @@ class AlertaType(graphene.ObjectType):
     almacen_nombre = graphene.String()
     nivel_actual = graphene.String()
     nivel_minimo = graphene.String()
+    lote = graphene.ID()
     fecha_alerta = graphene.String()
     fecha_resolucion = graphene.String()
 
 
-class RecetaIngredienteType(graphene.ObjectType):
+class RecetaPlatoType(graphene.ObjectType):
+    id = graphene.ID()
+    plato_id = graphene.ID()
     ingrediente_id = graphene.ID()
     nombre_ingrediente = graphene.String()
     cantidad = graphene.String()
     unidad_medida = graphene.String()
     costo_unitario = graphene.String()
-    costo_ingrediente = graphene.String()
-    fecha_costo_actualizado = graphene.String()
-
-
-class CostoPlatoType(graphene.ObjectType):
-    plato_id = graphene.ID()
-    costo_total = graphene.String()
-    tiene_costos_vacios = graphene.Boolean()
-    advertencia = graphene.String()
-    ingredientes = graphene.List(RecetaIngredienteType)
+    costo_ingrediente = graphene.Float()
+    fecha_actualizacion = graphene.String()

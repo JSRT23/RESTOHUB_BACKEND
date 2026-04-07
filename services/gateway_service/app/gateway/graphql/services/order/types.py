@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/graphql/services/order/types.py
 import graphene
 
 
@@ -13,6 +14,7 @@ class DetallePedidoType(graphene.ObjectType):
 
 class ComandaCocinaType(graphene.ObjectType):
     id = graphene.ID()
+    pedido = graphene.ID()
     estacion = graphene.String()
     estado = graphene.String()
     hora_envio = graphene.String()
@@ -29,6 +31,7 @@ class SeguimientoPedidoType(graphene.ObjectType):
 
 class EntregaPedidoType(graphene.ObjectType):
     id = graphene.ID()
+    pedido = graphene.ID()
     tipo_entrega = graphene.String()
     direccion = graphene.String()
     repartidor_id = graphene.ID()
@@ -54,3 +57,15 @@ class PedidoType(graphene.ObjectType):
     comandas = graphene.List(ComandaCocinaType)
     seguimientos = graphene.List(SeguimientoPedidoType)
     entrega = graphene.Field(EntregaPedidoType)
+
+    def resolve_detalles(root, info):
+        return root.get("detalles", []) if isinstance(root, dict) else []
+
+    def resolve_comandas(root, info):
+        return root.get("comandas", []) if isinstance(root, dict) else []
+
+    def resolve_seguimientos(root, info):
+        return root.get("seguimientos", []) if isinstance(root, dict) else []
+
+    def resolve_entrega(root, info):
+        return root.get("entrega") if isinstance(root, dict) else None
