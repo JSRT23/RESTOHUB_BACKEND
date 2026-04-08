@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
+from decimal import Decimal, ROUND_HALF_UP
 from .models import (
     Proveedor, Almacen, RecetaPlato,
     IngredienteInventario, LoteIngrediente,
@@ -442,11 +443,7 @@ class OrdenCompraWriteSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         detalles_data = validated_data.pop("detalles")
 
-        # Calcular total estimado
-        total = sum(
-            d["precio_unitario"] * d["cantidad"]
-            for d in detalles_data
-        )
+        total = Decimal("0.00")
 
         orden = OrdenCompra.objects.create(
             **validated_data,
@@ -455,7 +452,29 @@ class OrdenCompraWriteSerializer(serializers.ModelSerializer):
         )
 
         for detalle_data in detalles_data:
-            DetalleOrdenCompra.objects.create(orden=orden, **detalle_data)
+            precio = Decimal(detalle_data["precio_unitario"])
+            cantidad = Decimal(detalle_data["cantidad"])
+
+            # 🔥 CALCULO CORRECTO CON REDONDEO
+            subtotal = (precio * cantidad).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
+
+            DetalleOrdenCompra.objects.create(
+                orden=orden,
+                subtotal=subtotal,
+                **detalle_data
+            )
+
+            total += subtotal
+
+        # 🔥 REDONDEAR TOTAL TAMBIÉN
+        orden.total_estimado = total.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+        orden.save(update_fields=["total_estimado"])
 
         return orden
 
