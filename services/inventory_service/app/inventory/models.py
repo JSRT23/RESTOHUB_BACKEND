@@ -3,7 +3,6 @@ import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from decimal import Decimal, ROUND_HALF_UP
 
 
 # ─────────────────────────────────────────
@@ -511,14 +510,7 @@ class DetalleOrdenCompra(models.Model):
             )
 
     def save(self, *args, **kwargs):
-        subtotal = Decimal(self.precio_unitario) * Decimal(self.cantidad)
-
-        # 🔥 REDONDEO OBLIGATORIO A 2 DECIMALES
-        self.subtotal = subtotal.quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
-        )
-
+        self.subtotal = self.precio_unitario * self.cantidad
         self.full_clean()
         super().save(*args, **kwargs)
 

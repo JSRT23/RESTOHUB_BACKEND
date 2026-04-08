@@ -74,16 +74,14 @@ class RestauranteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
         )
         return Response({"detail": "Restaurante desactivado."})
 
-
 # ─────────────────────────────────────────
 # CATEGORIA
 # ─────────────────────────────────────────
+
+
 class CategoriaViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
-
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["activo"]
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -115,16 +113,14 @@ class CategoriaViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
                              MenuEventBuilder.categoria_desactivada(obj))
         return Response({"detail": "Categoría desactivada."})
 
-
 # ─────────────────────────────────────────
 # INGREDIENTE
 # ─────────────────────────────────────────
+
+
 class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     queryset = Ingrediente.objects.all()
     serializer_class = IngredienteSerializer
-
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["activo", "unidad_medida"]
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -147,7 +143,6 @@ class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
                              MenuEventBuilder.ingrediente_desactivado(obj))
         return Response({"detail": "Ingrediente desactivado."})
 
-
 # ─────────────────────────────────────────
 # PLATO
 # ─────────────────────────────────────────
@@ -155,10 +150,6 @@ class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
 class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     queryset = Plato.objects.all()
-
-    # 🔥 FILTROS ACTIVADOS
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["activo", "categoria"]
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -169,37 +160,29 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         instance = serializer.save()
-        self.publicar_evento(
-            MenuEvents.PLATO_CREADO,
-            MenuEventBuilder.plato_creado(instance)
-        )
+        self.publicar_evento(MenuEvents.PLATO_CREADO,
+                             MenuEventBuilder.plato_creado(instance))
 
     def perform_update(self, serializer):
         instance = serializer.save()
         cambios = {field: getattr(instance, field)
                    for field in serializer.validated_data}
-        self.publicar_evento(
-            MenuEvents.PLATO_ACTUALIZADO,
-            MenuEventBuilder.plato_actualizado(instance, cambios)
-        )
+        self.publicar_evento(MenuEvents.PLATO_ACTUALIZADO,
+                             MenuEventBuilder.plato_actualizado(instance, cambios))
 
     def perform_destroy(self, instance):
         plato_id = str(instance.id)
         instance.delete()
-        self.publicar_evento(
-            MenuEvents.PLATO_ELIMINADO,
-            MenuEventBuilder.plato_eliminado(plato_id)
-        )
+        self.publicar_evento(MenuEvents.PLATO_ELIMINADO,
+                             MenuEventBuilder.plato_eliminado(plato_id))
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
         obj = self.get_object()
         obj.activo = True
         obj.save()
-        self.publicar_evento(
-            MenuEvents.PLATO_ACTIVADO,
-            MenuEventBuilder.plato_estado(obj)
-        )
+        self.publicar_evento(MenuEvents.PLATO_ACTIVADO,
+                             MenuEventBuilder.plato_estado(obj))
         return Response({"detail": "Plato activado."})
 
     @action(detail=True, methods=["post"])
@@ -207,10 +190,8 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
         obj = self.get_object()
         obj.activo = False
         obj.save()
-        self.publicar_evento(
-            MenuEvents.PLATO_DESACTIVADO,
-            MenuEventBuilder.plato_estado(obj)
-        )
+        self.publicar_evento(MenuEvents.PLATO_DESACTIVADO,
+                             MenuEventBuilder.plato_estado(obj))
         return Response({"detail": "Plato desactivado."})
 
     @action(detail=True, methods=["get", "post"])
@@ -226,10 +207,7 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
             self.publicar_evento(
                 MenuEvents.PLATO_INGREDIENTE_AGREGADO,
                 MenuEventBuilder.plato_ingrediente_agregado(
-                    plato.id,
-                    instance.ingrediente.id,
-                    instance.cantidad,
-                    instance.ingrediente.unidad_medida
+                    plato.id, instance.ingrediente.id, instance.cantidad, instance.ingrediente.unidad_medida
                 )
             )
             return Response(serializer.data, status=201)
@@ -240,19 +218,15 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     def quitar_ingrediente(self, request, pk=None, ingrediente_id=None):
         plato = self.get_object()
         rel = get_object_or_404(
-            PlatoIngrediente,
-            plato=plato,
-            ingrediente_id=ingrediente_id
-        )
+            PlatoIngrediente, plato=plato, ingrediente_id=ingrediente_id)
         rel.delete()
         self.publicar_evento(
             MenuEvents.PLATO_INGREDIENTE_ELIMINADO,
             MenuEventBuilder.plato_ingrediente_eliminado(
-                plato.id,
-                ingrediente_id
-            )
+                plato.id, ingrediente_id)
         )
         return Response(status=204)
+
 # ─────────────────────────────────────────
 # PRECIO
 # ─────────────────────────────────────────
@@ -260,9 +234,6 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
 class PrecioPlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     queryset = PrecioPlato.objects.all()
-
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["activo", "plato", "restaurante"]
 
     def get_serializer_class(self):
         if self.action in ("create", "partial_update"):
@@ -275,8 +246,9 @@ class PrecioPlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
                              MenuEventBuilder.precio_creado(instance))
 
     def perform_update(self, serializer):
-        precio_anterior = serializer.instance.precio  # capture before save
         instance = serializer.save()
+        # Para actualizar, usamos precio_anterior
+        precio_anterior = serializer.instance.precio
         self.publicar_evento(MenuEvents.PRECIO_ACTUALIZADO,
                              MenuEventBuilder.precio_actualizado(instance, precio_anterior))
 

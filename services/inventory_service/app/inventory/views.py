@@ -10,14 +10,13 @@ from .models import (
     Proveedor, Almacen, IngredienteInventario,
     LoteIngrediente, MovimientoInventario,
     OrdenCompra, DetalleOrdenCompra, AlertaStock, RecetaPlato,
-    EstadoLote, EstadoAlerta, EstadoOrdenCompra,
 )
 from .serializers import (
     ProveedorSerializer, ProveedorListSerializer,
     AlmacenSerializer, AlmacenWriteSerializer,
     IngredienteInventarioSerializer, IngredienteInventarioListSerializer,
     IngredienteInventarioWriteSerializer, IngredienteInventarioNivelesSerializer,
-    AjusteStockSerializer, CostoPlatoSerializer,
+    AjusteStockSerializer,
     LoteIngredienteSerializer, LoteIngredienteWriteSerializer, LoteListSerializer,
     MovimientoInventarioSerializer,
     OrdenCompraSerializer, OrdenCompraListSerializer, OrdenCompraWriteSerializer,
@@ -35,26 +34,19 @@ from app.inventory.infrastructure.messaging.publisher import get_publisher  # �
 # ─────────────────────────────────────────
 
 def _crear_movimiento(inv, tipo, cantidad, descripcion):
-    """
-    cantidad debe ser positivo para ENTRADA/DEVOLUCION/VENCIMIENTO/SALIDA.
-    Para AJUSTE, cantidad puede ser negativo (reducción) o positivo (aumento).
-    El log de movimiento siempre almacena abs(cantidad).
-    """
     cantidad_antes = inv.cantidad_actual
 
     if tipo in ["SALIDA", "VENCIMIENTO"]:
-        inv.cantidad_actual = max(inv.cantidad_actual - abs(cantidad), 0)
-    elif tipo == "AJUSTE":
-        inv.cantidad_actual = max(inv.cantidad_actual + cantidad, 0)
-    else:  # ENTRADA, DEVOLUCION
-        inv.cantidad_actual += abs(cantidad)
+        inv.cantidad_actual = max(inv.cantidad_actual - cantidad, 0)
+    else:
+        inv.cantidad_actual += cantidad
 
     inv.save(update_fields=["cantidad_actual", "fecha_actualizacion"])
 
     MovimientoInventario.objects.create(
         ingrediente_inventario=inv,
         tipo_movimiento=tipo,
-        cantidad=abs(cantidad),
+        cantidad=cantidad,
         cantidad_antes=cantidad_antes,
         cantidad_despues=inv.cantidad_actual,
         descripcion=descripcion,
@@ -197,34 +189,6 @@ class IngredienteInventarioViewSet(viewsets.ModelViewSet):
             return IngredienteInventarioNivelesSerializer
         return IngredienteInventarioSerializer
 
-    @action(detail=False, methods=["get"], url_path="costo-plato")
-    def costo_plato(self, request):
-        plato_id = request.query_params.get("plato_id")
-        if not plato_id:
-            return Response(
-                {"detail": "plato_id es requerido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        recetas = RecetaPlato.objects.filter(plato_id=plato_id)
-        if not recetas.exists():
-            return Response(
-                {"detail": "No se encontraron recetas para este plato."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        costo_total = sum(r.costo_ingrediente for r in recetas)
-        tiene_costos_vacios = recetas.filter(costo_unitario=0).exists()
-
-        data = {
-            "plato_id": plato_id,
-            "costo_total": round(costo_total, 4),
-            "tiene_costos_vacios": tiene_costos_vacios,
-            "ingredientes": recetas,
-        }
-
-        return Response(CostoPlatoSerializer(data).data)
-
     @action(detail=True, methods=["post"])
     def ajustar(self, request, pk=None):
         inv = self.get_object()
@@ -242,7 +206,8 @@ class IngredienteInventarioViewSet(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
-            _crear_movimiento(inv, "AJUSTE", cantidad, descripcion)
+            _crear_movimiento(inv, "AJUSTE", abs(cantidad),
+                              descripcion)   # ✅ corregido
             _verificar_alertas(inv)
 
         return Response(IngredienteInventarioSerializer(inv).data)
@@ -279,38 +244,6 @@ class LoteIngredienteViewSet(viewsets.ModelViewSet):
         _crear_movimiento(
             inv, "ENTRADA", lote.cantidad_recibida, "Nuevo lote recibido")
 
-        inv.lote_actual = lote
-        inv.save(update_fields=["lote_actual"])
-
-    @action(detail=True, methods=["post"])
-    def retirar(self, request, pk=None):
-        lote = self.get_object()
-
-        if lote.estado == EstadoLote.RETIRADO:
-            return Response(
-                {"detail": "Este lote ya está retirado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        with transaction.atomic():
-            if lote.cantidad_actual > 0:
-                inv = IngredienteInventario.objects.filter(
-                    ingrediente_id=lote.ingrediente_id,
-                    almacen=lote.almacen,
-                ).first()
-                if inv:
-                    _crear_movimiento(
-                        inv, "VENCIMIENTO", lote.cantidad_actual,
-                        f"Retiro de lote {lote.numero_lote}",
-                    )
-                    _verificar_alertas(inv)
-
-            lote.estado = EstadoLote.RETIRADO
-            lote.cantidad_actual = 0
-            lote.save(update_fields=["estado", "cantidad_actual"])
-
-        return Response(LoteIngredienteSerializer(lote).data)
-
 
 # ─────────────────────────────────────────
 # ORDEN COMPRA
@@ -329,143 +262,18 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         return OrdenCompraSerializer
 
     @action(detail=True, methods=["post"])
-    def enviar(self, request, pk=None):
-        orden = self.get_object()
-
-        if orden.estado != "BORRADOR":
-            return Response(
-                {"detail": "Solo se pueden enviar órdenes en estado BORRADOR."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        orden.estado = EstadoOrdenCompra.ENVIADA
-        orden.save(update_fields=["estado"])
-
-        get_publisher().publish(
-            InventoryEvents.ORDEN_COMPRA_ENVIADA,
-            InventoryEventBuilder.orden_compra_enviada(orden),
-        )
-
-        return Response(OrdenCompraSerializer(orden).data)
-
-    @action(detail=True, methods=["post"])
-    def cancelar(self, request, pk=None):
-        orden = self.get_object()
-
-        if orden.estado == EstadoOrdenCompra.RECIBIDA:
-            return Response(
-                {"detail": "No se puede cancelar una orden ya recibida."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if orden.estado == EstadoOrdenCompra.CANCELADA:
-            return Response(
-                {"detail": "Esta orden ya está cancelada."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        orden.estado = EstadoOrdenCompra.CANCELADA
-        orden.save(update_fields=["estado"])
-
-        get_publisher().publish(
-            InventoryEvents.ORDEN_COMPRA_CANCELADA,
-            InventoryEventBuilder.orden_compra_cancelada(orden),
-        )
-
-        return Response(OrdenCompraSerializer(orden).data)
-
-    @action(detail=True, methods=["post"])
     def recibir(self, request, pk=None):
         orden = self.get_object()
 
-        if orden.estado != EstadoOrdenCompra.ENVIADA:
+        if orden.estado != "ENVIADA":
             return Response(
                 {"detail": "Solo se pueden recibir órdenes en estado ENVIADA."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = RecibirOrdenSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        with transaction.atomic():
-            for detalle_data in serializer.validated_data["detalles"]:
-                try:
-                    detalle = DetalleOrdenCompra.objects.get(
-                        id=detalle_data["detalle_id"], orden=orden
-                    )
-                except DetalleOrdenCompra.DoesNotExist:
-                    return Response(
-                        {"detail": f"Detalle {detalle_data['detalle_id']} no pertenece a esta orden."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                cantidad_recibida = detalle_data["cantidad_recibida"]
-                if cantidad_recibida > detalle.cantidad:
-                    return Response(
-                        {"detail": f"Cantidad recibida supera la pedida para '{detalle.nombre_ingrediente}'."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                detalle.cantidad_recibida = cantidad_recibida
-                detalle.save(update_fields=["cantidad_recibida"])
-
-                if cantidad_recibida == 0:
-                    continue
-
-                # Use first warehouse for this restaurant; skip if none exists
-                almacen = Almacen.objects.filter(
-                    restaurante_id=orden.restaurante_id, activo=True
-                ).first()
-                if not almacen:
-                    continue
-
-                lote = LoteIngrediente.objects.create(
-                    ingrediente_id=detalle.ingrediente_id,
-                    almacen=almacen,
-                    proveedor=orden.proveedor,
-                    numero_lote=detalle_data["numero_lote"],
-                    fecha_vencimiento=detalle_data["fecha_vencimiento"],
-                    fecha_produccion=detalle_data.get("fecha_produccion"),
-                    cantidad_recibida=cantidad_recibida,
-                    cantidad_actual=cantidad_recibida,
-                    unidad_medida=detalle.unidad_medida,
-                )
-
-                inv, _ = IngredienteInventario.objects.get_or_create(
-                    ingrediente_id=detalle.ingrediente_id,
-                    almacen=almacen,
-                    defaults={
-                        "nombre_ingrediente": detalle.nombre_ingrediente,
-                        "unidad_medida": detalle.unidad_medida,
-                    },
-                )
-
-                _crear_movimiento(
-                    inv, "ENTRADA", cantidad_recibida,
-                    f"Recepción OC {str(orden.id)[:8]} — lote {lote.numero_lote}",
-                )
-
-                inv.lote_actual = lote
-                inv.save(update_fields=["lote_actual"])
-
-                # Update unit cost in recipe so margin analysis stays current
-                RecetaPlato.objects.filter(
-                    ingrediente_id=detalle.ingrediente_id
-                ).update(
-                    costo_unitario=detalle.precio_unitario,
-                    fecha_costo_actualizado=timezone.now(),
-                )
-
-            orden.estado = EstadoOrdenCompra.RECIBIDA
-            orden.fecha_recepcion = timezone.now()
-            notas = serializer.validated_data.get("notas")
-            if notas:
-                orden.notas = notas
-            orden.save(update_fields=["estado", "fecha_recepcion", "notas"])
-
-        get_publisher().publish(
-            InventoryEvents.ORDEN_COMPRA_RECIBIDA,
-            InventoryEventBuilder.orden_compra_recibida(orden),
-        )
+        orden.estado = "RECIBIDA"
+        orden.fecha_recepcion = timezone.now()
+        orden.save()
 
         return Response(OrdenCompraSerializer(orden).data)
 
@@ -496,24 +304,7 @@ class AlertaStockViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"])
     def resolver(self, request, pk=None):
         alerta = self.get_object()
-        if alerta.estado != EstadoAlerta.PENDIENTE:
-            return Response(
-                {"detail": "Solo se pueden resolver alertas pendientes."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         alerta.resolver()
-        return Response(AlertaStockSerializer(alerta).data)
-
-    @action(detail=True, methods=["post"])
-    def ignorar(self, request, pk=None):
-        alerta = self.get_object()
-        if alerta.estado != EstadoAlerta.PENDIENTE:
-            return Response(
-                {"detail": "Solo se pueden ignorar alertas pendientes."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        alerta.estado = EstadoAlerta.IGNORADA
-        alerta.save(update_fields=["estado"])
         return Response(AlertaStockSerializer(alerta).data)
 
 
