@@ -39,10 +39,10 @@ class InventoryEventBuilder:
             "ingrediente_id": str(alerta.ingrediente_id),
             "restaurante_id": str(alerta.restaurante_id),
             "almacen_id": str(alerta.almacen_id),
-            "nombre_ingrediente": alerta.nombre_ingrediente,
+            "nombre_ingrediente": alerta.ingrediente_inventario.nombre_ingrediente,
             "nivel_actual": float(alerta.nivel_actual),
             "nivel_minimo": float(alerta.nivel_minimo),
-            "unidad_medida": alerta.unidad_medida
+            "unidad_medida": alerta.ingrediente_inventario.unidad_medida,
         }
 
     @staticmethod
@@ -52,7 +52,7 @@ class InventoryEventBuilder:
             "ingrediente_id": str(alerta.ingrediente_id),
             "restaurante_id": str(alerta.restaurante_id),
             "almacen_id": str(alerta.almacen_id),
-            "nombre_ingrediente": alerta.nombre_ingrediente
+            "nombre_ingrediente": alerta.ingrediente_inventario.nombre_ingrediente,
         }
 
     @staticmethod
