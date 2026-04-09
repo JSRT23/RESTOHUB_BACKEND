@@ -29,7 +29,8 @@ SECRET_KEY = 'django-insecure-41zwd347!ii2@tn+cr0$%$t4qi=fmkx1mv5@(9!gfbg_dn1g5@
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["*", "menu_service", "localhost", "127.0.0.1", "0.0.0.0"]
+ALLOWED_HOSTS = ["*", "menu_service",
+                 "menu_service:8000", "localhost", "127.0.0.1"]
 
 # RabbitMQ
 RABBITMQ = {

@@ -6,7 +6,7 @@ from django.dispatch import receiver
 
 from app.inventory.events.builders import InventoryEventBuilder
 from app.inventory.events.event_types import InventoryEvents
-from app.inventory.infrastructure.messaging.publisher import get_publisher  # ✅ singleton
+from app.inventory.infrastructure.messaging.publisher import get_publisher
 from app.inventory.models import (
     AlertaStock,
     LoteIngrediente,
@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
-# 🚨 ALERTAS — solo las creadas fuera de order_handlers
-# (ej: alertas de vencimiento generadas por un cron)
-# Las alertas de stock bajo las publica order_handlers
-# directamente para tener el contexto completo.
+# 🚨 ALERTAS DE VENCIMIENTO
+#
+# Las alertas STOCK_BAJO y AGOTADO las publica order_handlers
+# directamente para tener el contexto completo y evitar
+# double-publish. Aquí solo cubrimos VENCIMIENTO, que viene
+# de un proceso distinto (cron de verificación de lotes).
 # =========================================================
 
 @receiver(post_save, sender=AlertaStock)
@@ -28,18 +30,36 @@ def alerta_creada(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # Las alertas STOCK_BAJO y AGOTADO las publica order_handlers
-    # para evitar double-publish. Aquí solo cubrimos VENCIMIENTO
-    # que viene de un proceso distinto (cron de verificación).
     if instance.tipo_alerta != "VENCIMIENTO":
         return
 
+    # Las alertas de vencimiento están asociadas a un lote.
+    # El builder necesita: lote_id, fecha_vencimiento, dias_para_vencer.
+    # Estos datos viven en LoteIngrediente, no en AlertaStock.
+    # Si no hay lote asociado, no podemos construir el payload completo.
+    if not instance.lote_id:
+        logger.warning(
+            f"⚠️ Alerta VENCIMIENTO sin lote asociado → {instance.id} — evento no publicado"
+        )
+        return
+
     try:
-        publisher = get_publisher()  # ✅ singleton, sin close()
-        publisher.publish(
+        lote = instance.lote
+
+        payload = {
+            "alerta_id":          str(instance.id),
+            "lote_id":            str(lote.id),
+            "ingrediente_id":     str(instance.ingrediente_id),
+            "restaurante_id":     str(instance.restaurante_id),
+            "almacen_id":         str(instance.almacen_id),
+            "nombre_ingrediente": instance.ingrediente_inventario.nombre_ingrediente,
+            "fecha_vencimiento":  lote.fecha_vencimiento.isoformat() if lote.fecha_vencimiento else None,
+            "dias_para_vencer":   lote.dias_para_vencer,
+        }
+
+        get_publisher().publish(
             InventoryEvents.ALERTA_VENCIMIENTO_PROXIMO,
-            InventoryEventBuilder.alerta_vencimiento_proximo(
-                instance),  # ✅ nombre correcto
+            payload,
         )
         logger.info(f"🚨 Alerta vencimiento publicada → {instance.id}")
 
@@ -57,8 +77,7 @@ def lote_recibido(sender, instance, created, **kwargs):
         return
 
     try:
-        publisher = get_publisher()  # ✅ singleton
-        publisher.publish(
+        get_publisher().publish(
             InventoryEvents.LOTE_RECIBIDO,
             InventoryEventBuilder.lote_recibido(instance),
         )
@@ -79,7 +98,7 @@ _ESTADO_A_EVENTO = {
 }
 
 _ESTADO_A_BUILDER = {
-    "ENVIADA":   InventoryEventBuilder.orden_compra_enviada,    # ✅ métodos que existen
+    "ENVIADA":   InventoryEventBuilder.orden_compra_enviada,
     "RECIBIDA":  InventoryEventBuilder.orden_compra_recibida,
     "CANCELADA": InventoryEventBuilder.orden_compra_cancelada,
 }
@@ -88,7 +107,7 @@ _ESTADO_A_BUILDER = {
 @receiver(post_save, sender=OrdenCompra)
 def orden_compra_eventos(sender, instance, created, **kwargs):
     try:
-        publisher = get_publisher()  # ✅ singleton
+        publisher = get_publisher()
 
         if created:
             publisher.publish(
@@ -105,7 +124,8 @@ def orden_compra_eventos(sender, instance, created, **kwargs):
             publisher.publish(event_type, builder(instance))
 
         logger.info(
-            f"🛒 OrdenCompra evento publicado → {instance.estado} ({instance.id})")
+            f"🛒 OrdenCompra evento publicado → {instance.estado} ({instance.id})"
+        )
 
     except Exception:
         logger.exception("💥 Error publicando evento de orden_compra")

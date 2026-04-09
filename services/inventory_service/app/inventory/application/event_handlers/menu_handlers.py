@@ -2,10 +2,12 @@
 """
 Handlers de eventos del menu_service.
 
-Cambios respecto a la versión anterior:
-✅ handle_restaurante_creado agregado (estaba en declare_queues pero sin handler)
-✅ Validación con schemas antes de tocar la BD
-✅ update_or_create en todos los handlers → idempotente por naturaleza
+Correcciones respecto a la versión anterior:
+✅ handle_plato_ingrediente_agregado ahora resuelve nombre_ingrediente
+   buscando en el modelo Ingrediente local antes de crear la RecetaPlato.
+✅ update_or_create en todos los handlers → idempotente por naturaleza.
+✅ Validación con schemas antes de tocar la BD.
+✅ handle_restaurante_creado crea el Almacén principal del restaurante.
 """
 import logging
 from uuid import UUID
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def handle_restaurante_creado(data: dict) -> None:
     """
-    Crea el Almacen principal del restaurante en inventory_service.
+    Crea el Almacén principal del restaurante en inventory_service.
     Inventory necesita saber que el restaurante existe antes de
     poder registrar stock en él.
     """
@@ -59,6 +61,11 @@ def handle_restaurante_creado(data: dict) -> None:
 # ─────────────────────────────────────────
 
 def handle_ingrediente_creado(data: dict) -> None:
+    """
+    Sincroniza el catálogo de ingredientes de menu_service.
+    Guardamos una copia local en Ingrediente para poder resolver
+    nombre_ingrediente cuando llegue un plato_ingrediente.agregado.
+    """
     try:
         from app.inventory.models import Ingrediente
 
@@ -112,6 +119,17 @@ def handle_ingrediente_actualizado(data: dict) -> None:
             ingrediente_id=UUID(ingrediente_id)
         ).update(**campos_limpios)
 
+        # Si se actualizó el nombre, sincronizar en IngredienteInventario y RecetaPlato
+        if "nombre" in campos_limpios:
+            from app.inventory.models import IngredienteInventario, RecetaPlato
+            nuevo_nombre = campos_limpios["nombre"]
+            IngredienteInventario.objects.filter(
+                ingrediente_id=UUID(ingrediente_id)
+            ).update(nombre_ingrediente=nuevo_nombre)
+            RecetaPlato.objects.filter(
+                ingrediente_id=UUID(ingrediente_id)
+            ).update(nombre_ingrediente=nuevo_nombre)
+
         if updated:
             logger.info(f"✏️ Ingrediente actualizado → {ingrediente_id}")
         else:
@@ -149,23 +167,54 @@ def handle_ingrediente_desactivado(data: dict) -> None:
 # 🍳 RELACIÓN PLATO - INGREDIENTE (RECETA)
 # ─────────────────────────────────────────
 
+def _resolver_nombre_ingrediente(ingrediente_id: UUID) -> str:
+    """
+    Busca el nombre del ingrediente en la copia local.
+    Si no existe (llegó el evento antes del ingrediente.creado),
+    devuelve un placeholder — se corregirá cuando llegue el evento.
+    """
+    try:
+        from app.inventory.models import Ingrediente
+        ing = Ingrediente.objects.get(ingrediente_id=ingrediente_id)
+        return ing.nombre
+    except Exception:
+        logger.warning(
+            f"⚠️ Ingrediente {ingrediente_id} no encontrado localmente — "
+            f"usando placeholder. Se actualizará con ingrediente.actualizado."
+        )
+        return f"Ingrediente {ingrediente_id}"
+
+
 def handle_plato_ingrediente_agregado(data: dict) -> None:
+    """
+    Crea o actualiza la RecetaPlato en inventory_service.
+
+    Corrección: resuelve nombre_ingrediente desde el catálogo local
+    para no dejar el campo vacío (NOT NULL en el modelo).
+    """
     try:
         from app.inventory.models import RecetaPlato
 
         payload = PlatoIngredienteSchema.from_dict(data)
 
+        # Resolver nombre del ingrediente desde la copia local
+        nombre_ingrediente = _resolver_nombre_ingrediente(
+            payload.ingrediente_id)
+
         RecetaPlato.objects.update_or_create(
             plato_id=payload.plato_id,
             ingrediente_id=payload.ingrediente_id,
             defaults={
-                "cantidad":      payload.cantidad,
-                "unidad_medida": payload.unidad_medida,
+                "cantidad":           payload.cantidad,
+                "unidad_medida":      payload.unidad_medida,
+                "nombre_ingrediente": nombre_ingrediente,
             },
         )
 
         logger.info(
-            f"➕ Ingrediente agregado a receta → plato {payload.plato_id}")
+            f"➕ Ingrediente agregado a receta → plato {payload.plato_id} "
+            f"| ingrediente: {nombre_ingrediente}"
+        )
 
     except SchemaError as e:
         logger.error(f"❌ Payload inválido en plato_ingrediente.agregado: {e}")

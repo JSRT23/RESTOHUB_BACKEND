@@ -81,34 +81,68 @@ class AlmacenWriteSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class RecetaPlatoSerializer(serializers.ModelSerializer):
+    """
+    nombre_ingrediente se resuelve desde IngredienteInventario local
+    vía context['ingredientes_cache'] — sin llamadas HTTP.
+
+    nombre_plato se omite — el gateway lo resuelve cruzando con menu_service.
+    """
+    nombre_ingrediente = serializers.SerializerMethodField()
     costo_ingrediente = serializers.SerializerMethodField()
 
     class Meta:
         model = RecetaPlato
         fields = (
-            "id", "plato_id", "ingrediente_id",
-            "nombre_ingrediente", "cantidad", "unidad_medida",
-            "costo_unitario", "costo_ingrediente",
-            "fecha_actualizacion", "fecha_costo_actualizado",
+            "id",
+            "plato_id",
+            "ingrediente_id",
+            "nombre_ingrediente",
+            "cantidad",
+            "unidad_medida",
+            "costo_unitario",
+            "costo_ingrediente",
+            "fecha_actualizacion",
+            "fecha_costo_actualizado",
         )
         read_only_fields = fields
+
+    def get_nombre_ingrediente(self, obj):
+        # 1. El campo del modelo ya tiene valor — caso normal
+        if obj.nombre_ingrediente:
+            return obj.nombre_ingrediente
+
+        # 2. Buscar en IngredienteInventario vía cache inyectado por el ViewSet
+        ingredientes_cache = self.context.get("ingredientes_cache", {})
+        nombre = ingredientes_cache.get(str(obj.ingrediente_id))
+        if nombre:
+            RecetaPlato.objects.filter(pk=obj.pk).update(
+                nombre_ingrediente=nombre)
+            return nombre
+
+        # 3. Buscar en caché local de Ingrediente (tabla sincronizada vía RabbitMQ)
+        try:
+            from app.inventory.models import Ingrediente
+            ing = Ingrediente.objects.filter(
+                ingrediente_id=obj.ingrediente_id
+            ).first()
+            if ing:
+                RecetaPlato.objects.filter(pk=obj.pk).update(
+                    nombre_ingrediente=ing.nombre)
+                return ing.nombre
+        except Exception:
+            pass
+
+        return None
 
     def get_costo_ingrediente(self, obj):
         return round(obj.costo_ingrediente, 4)
 
 
 class CostoPlatoSerializer(serializers.Serializer):
-    """
-    Serializer para el endpoint GET /stock/costo-plato/?plato_id=...
-    Retorna el costo total del plato y el desglose por ingrediente.
-    Útil para análisis de márgenes: margen = precio_venta - costo_total
-    """
     plato_id = serializers.UUIDField()
     costo_total = serializers.DecimalField(max_digits=12, decimal_places=4)
     tiene_costos_vacios = serializers.BooleanField()
     ingredientes = RecetaPlatoSerializer(many=True)
-
-    # Campos calculados para analytics
     advertencia = serializers.SerializerMethodField()
 
     def get_advertencia(self, obj):

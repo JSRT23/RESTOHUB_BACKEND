@@ -229,10 +229,14 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
                     plato.id,
                     instance.ingrediente.id,
                     instance.cantidad,
-                    instance.ingrediente.unidad_medida
+                    instance.ingrediente.unidad_medida,
+                    instance.ingrediente.nombre,      # ✅ nombre incluido en el evento
                 )
             )
-            return Response(serializer.data, status=201)
+            return Response(
+                PlatoIngredienteSerializer(instance).data,
+                status=201
+            )
 
         return Response(serializer.errors, status=400)
 

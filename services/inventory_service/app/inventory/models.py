@@ -350,10 +350,53 @@ class LoteIngrediente(models.Model):
     def __str__(self):
         return f"Lote {self.numero_lote} — {self.almacen.nombre} ({self.estado})"
 
+# ─────────────────────────────────────────
+# INGREDIENTE (caché local de menu_service)
+# ─────────────────────────────────────────
+# IMPORTANTE: Agregar esta clase al final de models.py
+# Se sincroniza automáticamente vía RabbitMQ.
+# Su único propósito es resolver nombre_ingrediente cuando
+# llega un evento plato_ingrediente.agregado.
 
+
+class Ingrediente(models.Model):
+    """
+    Copia local del catálogo de ingredientes de menu_service.
+    Se mantiene sincronizada mediante eventos:
+      - app.menu.ingrediente.creado
+      - app.menu.ingrediente.actualizado
+      - app.menu.ingrediente.desactivado
+
+    NO se expone por API — es solo una caché interna.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # UUID del ingrediente en menu_service — clave de sincronización
+    ingrediente_id = models.UUIDField(
+        unique=True,
+        db_index=True,
+        help_text="UUID del ingrediente en menu_service"
+    )
+    nombre = models.CharField(max_length=255)
+    unidad_medida = models.CharField(
+        max_length=10,
+        choices=UnidadMedida.choices,
+        default=UnidadMedida.UNIDAD,
+    )
+    activo = models.BooleanField(default=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Ingrediente (caché)"
+        verbose_name_plural = "Ingredientes (caché)"
+        ordering = ["nombre"]
+
+    def __str__(self):
+        return f"{self.nombre} ({self.unidad_medida})"
 # ─────────────────────────────────────────
 # MOVIMIENTO INVENTARIO
 # ─────────────────────────────────────────
+
 
 class MovimientoInventario(models.Model):
     """

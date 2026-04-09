@@ -152,12 +152,18 @@ class MenuEventBuilder:
     # =========================================================
 
     @staticmethod
-    def plato_ingrediente_agregado(plato_id, ingrediente_id, cantidad, unidad_medida):
+    def plato_ingrediente_agregado(plato_id, ingrediente_id, cantidad, unidad_medida, nombre_ingrediente=""):
+        """
+        Agrega nombre_ingrediente al payload para que inventory_service
+        pueda poblar RecetaPlato.nombre_ingrediente sin necesitar un
+        caché local previo del ingrediente.
+        """
         return {
-            "plato_id": str(plato_id),
-            "ingrediente_id": str(ingrediente_id),
-            "cantidad": float(cantidad),
-            "unidad_medida": unidad_medida
+            "plato_id":           str(plato_id),
+            "ingrediente_id":     str(ingrediente_id),
+            "cantidad":           float(cantidad),
+            "unidad_medida":      unidad_medida,
+            "nombre_ingrediente": nombre_ingrediente,
         }
 
     @staticmethod
