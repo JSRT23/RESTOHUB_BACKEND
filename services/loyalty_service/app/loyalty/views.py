@@ -72,28 +72,21 @@ class PuntosViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """
         GET /puntos/{cliente_id}/
-        Intenta resolver desde Redis. Si no hay caché, va a PostgreSQL
-        y guarda el resultado con TTL configurado en settings.
+        Cache hit → respuesta directa sin SELECT a PostgreSQL.
+        Cache miss → PostgreSQL + guardar en caché.
         """
         cliente_id = str(pk)
 
-        saldo = _get_saldo_cache(cliente_id)
-        if saldo is not None:
-            cuenta = CuentaPuntos.objects.filter(
-                cliente_id=cliente_id
-            ).first()
-            if not cuenta:
-                return Response(
-                    {"detail": "El cliente no tiene cuenta de puntos."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            # Retornar datos completos con saldo desde caché
-            data = CuentaPuntosSerializer(cuenta).data
-            data["saldo"] = saldo
-            data["_cache"] = True
-            return Response(data)
+        saldo_cache = _get_saldo_cache(cliente_id)
+        if saldo_cache is not None:
+            # ✅ Cache hit: no ir a DB — construir respuesta mínima
+            return Response({
+                "cliente_id": cliente_id,
+                "saldo":      saldo_cache,
+                "_cache":     True,
+            })
 
-        # Cache miss → ir a PostgreSQL
+        # Cache miss → PostgreSQL
         cuenta = CuentaPuntos.objects.filter(cliente_id=cliente_id).first()
         if not cuenta:
             return Response(

@@ -21,7 +21,8 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    "app.loyalty",
+    # ✅ CORREGIDO: usar AppConfig para que ready() cargue los signals
+    "app.loyalty.apps.LoyaltyConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -56,57 +57,41 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# ---------------------------------------------------------------------------
-# Base de datos
-# ---------------------------------------------------------------------------
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("POSTGRES_DB"),
-        "USER": os.getenv("POSTGRES_USER"),
+        "NAME":     os.getenv("POSTGRES_DB"),
+        "USER":     os.getenv("POSTGRES_USER"),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
-        "HOST": os.getenv("POSTGRES_HOST"),
-        "PORT": os.getenv("POSTGRES_PORT"),
+        "HOST":     os.getenv("POSTGRES_HOST"),
+        "PORT":     os.getenv("POSTGRES_PORT"),
     }
 }
 
-# ---------------------------------------------------------------------------
-# Redis — caché de saldos de puntos
-#
-# Se usa django-redis como backend. Cada saldo de puntos se guarda con la
-# key "puntos:{cliente_id}" y un TTL configurable (default 5 min).
-#
-# Por qué allkeys-lru en Redis:
-#   loyalty_service tiene acceso de lectura frecuente y escritura baja.
-#   Si Redis se llena, preferimos evictar las keys menos usadas antes de
-#   fallar — el peor caso es un cache miss que va a PostgreSQL.
-# ---------------------------------------------------------------------------
-
+# ─────────────────────────────────────────
+# Redis
+# ─────────────────────────────────────────
 _redis_host = os.getenv("REDIS_HOST", "redis")
 _redis_port = os.getenv("REDIS_PORT", "6379")
-_redis_db = os.getenv("REDIS_DB", "0")
+_redis_db = os.getenv("REDIS_DB",   "0")
 
 CACHES = {
     "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
+        "BACKEND":  "django_redis.cache.RedisCache",
         "LOCATION": f"redis://{_redis_host}:{_redis_port}/{_redis_db}",
         "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            # Si Redis cae, el cache falla silenciosamente (no rompe la app)
-            "IGNORE_EXCEPTIONS": True,
+            "CLIENT_CLASS":    "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": True,  # cache miss silencioso si Redis cae
         },
         "KEY_PREFIX": "loyalty",
     }
 }
 
-# TTL por defecto para saldo de puntos (segundos)
 REDIS_PUNTOS_TTL = int(os.getenv("REDIS_PUNTOS_TTL", 300))
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────
 # RabbitMQ
-# ---------------------------------------------------------------------------
-
+# ─────────────────────────────────────────
 RABBITMQ = {
     "HOST":     os.getenv("RABBITMQ_HOST",     "rabbitmq"),
     "PORT":     int(os.getenv("RABBITMQ_PORT", 5672)),
@@ -116,10 +101,12 @@ RABBITMQ = {
     "EXCHANGE": os.getenv("RABBITMQ_EXCHANGE", "restohub"),
 }
 
-# ---------------------------------------------------------------------------
-# DRF
-# ---------------------------------------------------------------------------
+# ✅ Requerido por publisher.py
+SERVICE_NAME = os.getenv("SERVICE_NAME", "loyalty_service")
 
+# ─────────────────────────────────────────
+# DRF
+# ─────────────────────────────────────────
 _renderers = ["rest_framework.renderers.JSONRenderer"]
 if DEBUG:
     _renderers.append("rest_framework.renderers.BrowsableAPIRenderer")
@@ -129,10 +116,6 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }
-
-# ---------------------------------------------------------------------------
-# Internacionalización
-# ---------------------------------------------------------------------------
 
 LANGUAGE_CODE = "es-co"
 TIME_ZONE = "America/Bogota"

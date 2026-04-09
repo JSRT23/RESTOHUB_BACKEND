@@ -1,6 +1,10 @@
 # gateway_service/app/gateway/graphql/services/order/queries.py
+# CORRECCIÓN: seguimiento_pedido retornaba List(String) pero la API
+# retorna lista de objetos {id, estado, fecha, descripcion}
+# Fix: cambiar a List(SeguimientoPedidoType)
+
 import graphene
-from .types import PedidoType, ComandaCocinaType, EntregaPedidoType
+from .types import PedidoType, ComandaCocinaType, EntregaPedidoType, SeguimientoPedidoType
 from ....client import order_client
 
 
@@ -15,8 +19,9 @@ class OrderQuery(graphene.ObjectType):
     )
     pedido = graphene.Field(PedidoType, id=graphene.ID(required=True))
 
+    # ✅ CORREGIDO: SeguimientoPedidoType en lugar de graphene.String
     seguimiento_pedido = graphene.List(
-        graphene.String,
+        SeguimientoPedidoType,
         pedido_id=graphene.ID(required=True),
         description="Historial de estados del pedido en orden cronológico",
     )
@@ -30,13 +35,8 @@ class OrderQuery(graphene.ObjectType):
     comanda = graphene.Field(ComandaCocinaType, id=graphene.ID(required=True))
     entrega = graphene.Field(EntregaPedidoType, id=graphene.ID(required=True))
 
-    # ── Resolvers ─────────────────────────────────────────────────────────
-    # Retornamos dicts crudos — los resolvers de PedidoType
-    # (resolve_detalles, resolve_comandas, etc.) manejan los campos anidados.
-
     def resolve_pedidos(self, info, estado=None, canal=None,
                         restaurante_id=None, cliente_id=None):
-        # Usa PedidoListSerializer — sin detalles/comandas anidados
         return order_client.get_pedidos(
             estado=estado, canal=canal,
             restaurante_id=restaurante_id,
@@ -44,11 +44,10 @@ class OrderQuery(graphene.ObjectType):
         ) or []
 
     def resolve_pedido(self, info, id):
-        # Usa PedidoSerializer completo — incluye detalles, comandas, seguimientos, entrega
         return order_client.get_pedido(id)
 
     def resolve_seguimiento_pedido(self, info, pedido_id):
-        # Retorna lista de strings JSON — el frontend los parsea si necesita
+        # ✅ Retorna lista de dicts — SeguimientoPedidoType los resuelve
         return order_client.get_seguimiento(pedido_id) or []
 
     def resolve_comandas(self, info, estado=None, estacion=None, pedido_id=None):

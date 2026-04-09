@@ -1,15 +1,17 @@
 # gateway_service/app/gateway/graphql/services/menu/types.py
 import graphene
 
-
-# ─────────────────────────────────────────
-# NOTA DE ARQUITECTURA
-# ─────────────────────────────────────────
-# Los resolvers reciben el root como dict (la respuesta cruda de la API).
-# graphene usa root.get(field_name) por defecto.
-# Cuando el nombre del campo GraphQL difiere de la clave del dict
-# (ej: GraphQL plato_id ← dict key "plato"), se agrega resolve_*.
-# ─────────────────────────────────────────
+# CORRECCIONES:
+# 1. PrecioPlatoType: resolve_plato_id y resolve_restaurante_id usaban
+#    root.get("plato") y root.get("restaurante") pero el serializer retorna
+#    "plato_id" y "restaurante_id" → siempre None. Fix: leer las claves correctas.
+#
+# 2. PlatoIngredienteType: resolve_ingrediente_id usaba root.get("ingrediente")
+#    pero el serializer retorna "ingrediente_id" → siempre None.
+#    Fix: el campo ya se llama ingrediente_id, no necesita resolver custom.
+#
+# 3. PlatoType: resolve_categoria_id usaba root.get("categoria") pero el
+#    serializer retorna "categoria_id". Fix: leer la clave correcta.
 
 
 class RestauranteType(graphene.ObjectType):
@@ -22,7 +24,6 @@ class RestauranteType(graphene.ObjectType):
     activo = graphene.Boolean()
     fecha_creacion = graphene.String()
     fecha_actualizacion = graphene.String()
-    # Todos los campos coinciden con el dict → sin resolvers extra
 
 
 class CategoriaType(graphene.ObjectType):
@@ -42,29 +43,28 @@ class IngredienteType(graphene.ObjectType):
 
 class PlatoIngredienteType(graphene.ObjectType):
     """
-    Serializer retorna:
-      id, ingrediente (UUID), ingrediente_nombre, unidad_medida, cantidad
+    Serializer retorna: id, ingrediente_id, ingrediente_nombre, unidad_medida, cantidad
+    ✅ Fix: el campo del dict es 'ingrediente_id', no 'ingrediente'
     """
     id = graphene.ID()
+    # ✅ graphene lo resuelve directo: root.get("ingrediente_id")
     ingrediente_id = graphene.ID()
     ingrediente_nombre = graphene.String()
     unidad_medida = graphene.String()
     cantidad = graphene.Float()
 
-    def resolve_ingrediente_id(root, info):
-        return root.get("ingrediente") if isinstance(root, dict) else None
+    # ✅ Sin resolver custom — el nombre del campo GraphQL coincide con el key del dict
 
 
 class PrecioPlatoType(graphene.ObjectType):
     """
-    Serializer retorna:
-      id, plato (UUID), restaurante (UUID), restaurante_nombre,
-      precio, moneda (flat desde restaurante.moneda),
-      fecha_inicio, fecha_fin, activo, esta_vigente
+    Serializer retorna: id, plato_id, restaurante_id, restaurante_nombre,
+    precio, moneda, fecha_inicio, fecha_fin, activo, esta_vigente
+    ✅ Fix: los campos del dict son 'plato_id' y 'restaurante_id', no 'plato'/'restaurante'
     """
     id = graphene.ID()
-    plato_id = graphene.ID()
-    restaurante_id = graphene.ID()
+    plato_id = graphene.ID()              # ✅ sin resolver custom
+    restaurante_id = graphene.ID()        # ✅ sin resolver custom
     restaurante_nombre = graphene.String()
     precio = graphene.String()
     moneda = graphene.String()
@@ -73,23 +73,18 @@ class PrecioPlatoType(graphene.ObjectType):
     activo = graphene.Boolean()
     esta_vigente = graphene.Boolean()
 
-    def resolve_plato_id(root, info):
-        return root.get("plato") if isinstance(root, dict) else None
-
-    def resolve_restaurante_id(root, info):
-        return root.get("restaurante") if isinstance(root, dict) else None
-
 
 class PlatoType(graphene.ObjectType):
     """
-    List serializer retorna: id, nombre, descripcion, categoria (UUID),
-      categoria_nombre, imagen, activo, fecha_creacion, fecha_actualizacion
+    List serializer retorna: id, nombre, descripcion, categoria_id,
+    categoria_nombre, imagen, activo, fecha_creacion, fecha_actualizacion
     Detail serializer agrega: ingredientes[], precios[]
+    ✅ Fix: el campo del dict es 'categoria_id', no 'categoria'
     """
     id = graphene.ID()
     nombre = graphene.String()
     descripcion = graphene.String()
-    categoria_id = graphene.ID()
+    categoria_id = graphene.ID()          # ✅ sin resolver custom
     categoria_nombre = graphene.String()
     imagen = graphene.String()
     activo = graphene.Boolean()
@@ -98,18 +93,11 @@ class PlatoType(graphene.ObjectType):
     ingredientes = graphene.List(PlatoIngredienteType)
     precios = graphene.List(PrecioPlatoType)
 
-    def resolve_categoria_id(root, info):
-        return root.get("categoria") if isinstance(root, dict) else None
-
     def resolve_ingredientes(root, info):
-        if isinstance(root, dict):
-            return root.get("ingredientes", [])
-        return []
+        return root.get("ingredientes", []) if isinstance(root, dict) else []
 
     def resolve_precios(root, info):
-        if isinstance(root, dict):
-            return root.get("precios", [])
-        return []
+        return root.get("precios", []) if isinstance(root, dict) else []
 
 
 # ─────────────────────────────────────────

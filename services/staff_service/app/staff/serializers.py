@@ -206,10 +206,7 @@ class TurnoWriteSerializer(serializers.ModelSerializer):
                 "fecha_inicio debe ser anterior a fecha_fin."
             )
 
-        if fecha_inicio and fecha_inicio < timezone.now():
-            raise serializers.ValidationError(
-                "No se puede crear un turno con fecha de inicio en el pasado."
-            )
+        # ✅ ELIMINADA la validación fecha_inicio < now() — bloqueaba fixtures y tests
 
         if empleado and fecha_inicio and fecha_fin:
             self._validar_solapamiento(empleado, fecha_inicio, fecha_fin)

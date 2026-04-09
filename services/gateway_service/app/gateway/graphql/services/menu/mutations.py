@@ -181,10 +181,10 @@ class CrearPlato(graphene.Mutation):
 
     def mutate(self, info, nombre, descripcion, categoria_id=None, imagen=None):
         data = menu_client.crear_plato({
-            "nombre":      nombre,
-            "descripcion": descripcion,
-            "categoria":   categoria_id,
-            "imagen":      imagen,
+            "nombre":       nombre,
+            "descripcion":  descripcion,
+            "categoria_id": categoria_id,
+            "imagen":       imagen,
         })
         if not data:
             return CrearPlato(ok=False, error="Error al crear plato.")

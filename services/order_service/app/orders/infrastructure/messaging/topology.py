@@ -4,10 +4,10 @@ MAX_RETRIES = 3
 
 QUEUES = {
     "order": {
-        "name":     "order_queue",
-        "dlq":      "order_queue.dlq",
+        "name": "order_queue",
+        "dlq":  "order_queue.dlq",
         "bindings": [
-            # 👨‍🍳 staff_service — mueve el estado del pedido
+            # ── staff_service — mueve el estado del pedido ────────────────
             "app.staff.cocina.asignacion.creada",
             "app.staff.cocina.asignacion.completada",
             "app.staff.entrega.asignada",

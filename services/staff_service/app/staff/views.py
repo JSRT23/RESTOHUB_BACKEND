@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -549,9 +549,21 @@ class ServicioEntregaViewSet(viewsets.ReadOnlyModelViewSet):
 # AlertaOperacional
 # ---------------------------------------------------------------------------
 
-class AlertaOperacionalViewSet(viewsets.ReadOnlyModelViewSet):
+class AlertaOperacionalViewSet(
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    GET  /alertas/          → list
+    GET  /alertas/{id}/     → retrieve
+    POST /alertas/{id}/resolver/ → marcar como resuelta
+
+    ✅ No permite crear/editar/borrar alertas desde la API —
+       se crean exclusivamente desde los consumers de RabbitMQ.
+    """
     serializer_class = AlertaOperacionalSerializer
-    http_method_names = ["get", "post", "head", "options"]
+    # ✅ Sin http_method_names aquí — los mixins ya controlan qué métodos acepta cada acción
 
     def get_queryset(self):
         qs = AlertaOperacional.objects.all()
@@ -577,7 +589,7 @@ class AlertaOperacionalViewSet(viewsets.ReadOnlyModelViewSet):
         """
         POST /alertas/{id}/resolver/
         Marca la alerta como resuelta.
-        Usa update_fields para que el signal publique ALERTA_RESUELTA.
+        El signal publica ALERTA_RESUELTA a RabbitMQ automáticamente.
         """
         alerta = self.get_object()
 
@@ -588,7 +600,7 @@ class AlertaOperacionalViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         alerta.resuelta = True
-        alerta.save(update_fields=["resuelta"])
+        alerta.save(update_fields=["resuelta", "updated_at"])
 
         return Response(AlertaOperacionalSerializer(alerta).data)
 

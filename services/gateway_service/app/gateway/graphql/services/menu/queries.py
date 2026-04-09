@@ -1,4 +1,8 @@
 # gateway_service/app/gateway/graphql/services/menu/queries.py
+# CORRECCIÓN: resolve_menu_restaurante usaba plato.get("categoria")
+# pero PlatoListSerializer retorna "categoria_id" → todos los platos
+# terminaban en el grupo "Otros". Fix: usar "categoria_id".
+
 import graphene
 from .types import (
     RestauranteType, CategoriaType, PlatoType,
@@ -40,11 +44,6 @@ class MenuQuery(graphene.ObjectType):
         activo=graphene.Boolean(),
     )
 
-    # ── Resolvers ─────────────────────────────────────────────────────────
-    # Retornamos dicts crudos — graphene los resuelve con los resolvers
-    # definidos en cada Type (root.get(field_name) por defecto,
-    # resolve_* para campos con nombre distinto al key del dict).
-
     def resolve_restaurantes(self, info, activo=None, pais=None):
         return menu_client.get_restaurantes(activo=activo, pais=pais) or []
 
@@ -52,41 +51,27 @@ class MenuQuery(graphene.ObjectType):
         return menu_client.get_restaurante(id)
 
     def resolve_menu_restaurante(self, info, restaurante_id):
-        """
-        Construye el menú agrupado en el gateway combinando:
-          1. GET /restaurantes/{id}/
-          2. GET /platos/?activo=true
-          3. GET /precios/?restaurante_id=...&activo=true
-          4. GET /categorias/?activo=true
-
-        No requiere endpoint especial en menu_service.
-        El MenuRestauranteSerializer existe en menu_service pero no tiene
-        endpoint expuesto — se deja así para no acoplar el gateway al backend.
-        """
         restaurante = menu_client.get_restaurante(restaurante_id)
         if not restaurante:
             return None
 
         moneda = restaurante.get("moneda", "COP")
 
-        # Precios activos indexados por plato UUID
+        # Precios activos indexados por plato_id
         precios_raw = menu_client.get_precios(
             restaurante_id=restaurante_id, activo=True
         ) or []
         precios_por_plato = {}
         for p in precios_raw:
-            pid = str(p.get("plato", ""))
+            # ✅ El serializer retorna "plato_id" no "plato"
+            pid = str(p.get("plato_id", ""))
             if pid:
                 precios_por_plato[pid] = p
 
-        # Platos activos
         platos_raw = menu_client.get_platos(activo=True) or []
-
-        # Categorías activas indexadas por UUID
         categorias_raw = menu_client.get_categorias(activo=True) or []
         categorias_idx = {str(c["id"]): c for c in categorias_raw}
 
-        # Agrupar platos por categoría — solo con precio activo
         grupos: dict[str, list] = {}
         sin_categoria: list = []
 
@@ -96,7 +81,6 @@ class MenuQuery(graphene.ObjectType):
                 continue
 
             precio_obj = precios_por_plato[pid]
-
             menu_plato = MenuPlatoType(
                 plato_id=pid,
                 nombre=plato.get("nombre", ""),
@@ -106,13 +90,13 @@ class MenuQuery(graphene.ObjectType):
                 moneda=moneda,
             )
 
-            cat_id = str(plato.get("categoria") or "")
+            # ✅ CORREGIDO: el serializer retorna "categoria_id" no "categoria"
+            cat_id = str(plato.get("categoria_id") or "")
             if cat_id and cat_id in categorias_idx:
                 grupos.setdefault(cat_id, []).append(menu_plato)
             else:
                 sin_categoria.append(menu_plato)
 
-        # Construir categorías ordenadas
         categorias_result = []
         for cat in sorted(categorias_raw, key=lambda c: c.get("orden", 0)):
             cat_id = str(cat["id"])
@@ -150,11 +134,9 @@ class MenuQuery(graphene.ObjectType):
         return menu_client.get_categoria(id)
 
     def resolve_platos(self, info, activo=None, categoria_id=None):
-        # Usa PlatoListSerializer — sin ingredientes ni precios
         return menu_client.get_platos(activo=activo, categoria_id=categoria_id) or []
 
     def resolve_plato(self, info, id):
-        # Usa PlatoSerializer completo — incluye ingredientes y precios
         return menu_client.get_plato(id)
 
     def resolve_ingredientes(self, info, activo=None):

@@ -1,3 +1,9 @@
+# gateway_service/app/gateway/client/staff_client.py
+# CORRECCIÓN: staff_service usa PageNumberPagination → retorna
+# {"count": N, "results": [...]} en lugar de lista directa.
+# Fix: _get_list() extrae "results" si la respuesta es paginada.
+# Mismo patrón aplicable a loyalty_client si activa paginación.
+
 import logging
 import os
 import socket
@@ -6,10 +12,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Resolución de hostname → IP para evitar DisallowedHost en Django
-# ---------------------------------------------------------------------------
 
 def _resolve_url() -> str:
     base = os.getenv("STAFF_SERVICE_URL",
@@ -25,10 +27,6 @@ def _resolve_url() -> str:
 STAFF_SERVICE_URL = _resolve_url()
 
 
-# ---------------------------------------------------------------------------
-# Helpers HTTP
-# ---------------------------------------------------------------------------
-
 def _get(path: str, params: dict = None):
     try:
         with httpx.Client(timeout=10) as client:
@@ -42,6 +40,25 @@ def _get(path: str, params: dict = None):
     except Exception as exc:
         logger.error("[staff_client] Error en GET %s: %s", path, exc)
         return None
+
+
+def _get_list(path: str, params: dict = None) -> list:
+    """
+    GET que siempre retorna lista.
+    ✅ Maneja respuesta paginada {"count": N, "results": [...]}
+    y también respuesta directa [...].
+    """
+    data = _get(path, params=params)
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and "results" in data:
+        return data["results"]
+    # Fallback — retornar vacío antes que explotar graphene
+    logger.warning(
+        "[staff_client] Respuesta inesperada en %s: %s", path, type(data))
+    return []
 
 
 def _post(path: str, data: dict = None):
@@ -86,7 +103,7 @@ def get_restaurantes(pais: str = None, activo: bool = None):
         params["pais"] = pais
     if activo is not None:
         params["activo"] = str(activo).lower()
-    return _get("/restaurantes/", params=params)
+    return _get_list("/restaurantes/", params=params)
 
 
 def get_restaurante(restaurante_id: str):
@@ -109,7 +126,7 @@ def get_empleados(restaurante_id: str = None, rol: str = None, activo: bool = No
         params["rol"] = rol
     if activo is not None:
         params["activo"] = str(activo).lower()
-    return _get("/empleados/", params=params)
+    return _get_list("/empleados/", params=params)
 
 
 def get_empleado(empleado_id: str):
@@ -145,7 +162,7 @@ def get_turnos(empleado_id: str = None, restaurante_id: str = None,
         params["fecha_desde"] = fecha_desde
     if fecha_hasta:
         params["fecha_hasta"] = fecha_hasta
-    return _get("/turnos/", params=params)
+    return _get_list("/turnos/", params=params)
 
 
 def get_turno(turno_id: str):
@@ -179,7 +196,7 @@ def get_asistencia(empleado_id: str = None, fecha_desde: str = None,
         params["fecha_hasta"] = fecha_hasta
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
-    return _get("/asistencia/", params=params)
+    return _get_list("/asistencia/", params=params)
 
 
 def registrar_entrada(qr_token: str = None, turno_id: str = None, metodo: str = "qr"):
@@ -205,7 +222,7 @@ def get_estaciones(restaurante_id: str = None, activa: bool = None):
         params["restaurante_id"] = restaurante_id
     if activa is not None:
         params["activa"] = str(activa).lower()
-    return _get("/estaciones/", params=params)
+    return _get_list("/estaciones/", params=params)
 
 
 def crear_estacion(data: dict):
@@ -223,7 +240,7 @@ def get_asignaciones_cocina(restaurante_id: str = None, cocinero_id: str = None,
         params["fecha_desde"] = fecha_desde
     if sin_completar is not None:
         params["sin_completar"] = str(sin_completar).lower()
-    return _get("/asignaciones-cocina/", params=params)
+    return _get_list("/asignaciones-cocina/", params=params)
 
 
 # ---------------------------------------------------------------------------
@@ -236,14 +253,14 @@ def get_entregas(repartidor_id: str = None, estado: str = None):
         params["repartidor_id"] = repartidor_id
     if estado:
         params["estado"] = estado
-    return _get("/entregas/", params=params)
+    return _get_list("/entregas/", params=params)
 
 
 def get_repartidores_disponibles(restaurante_id: str = None):
     params = {}
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
-    return _get("/entregas/disponibles/", params=params)
+    return _get_list("/entregas/disponibles/", params=params)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +278,7 @@ def get_alertas(restaurante_id: str = None, nivel: str = None,
         params["tipo"] = tipo
     if resuelta is not None:
         params["resuelta"] = str(resuelta).lower()
-    return _get("/alertas/", params=params)
+    return _get_list("/alertas/", params=params)
 
 
 def resolver_alerta(alerta_id: str):
@@ -280,7 +297,7 @@ def get_nomina(empleado_id: str = None, restaurante_id: str = None, cerrado: boo
         params["restaurante_id"] = restaurante_id
     if cerrado is not None:
         params["cerrado"] = str(cerrado).lower()
-    return _get("/nomina/", params=params)
+    return _get_list("/nomina/", params=params)
 
 
 def generar_nomina(data: dict):
@@ -304,11 +321,11 @@ def get_predicciones(restaurante_id: str = None, fecha_desde: str = None,
         params["fecha_desde"] = fecha_desde
     if fecha_hasta:
         params["fecha_hasta"] = fecha_hasta
-    return _get("/predicciones/", params=params)
+    return _get_list("/predicciones/", params=params)
 
 
 def get_prediccion_semana(restaurante_id: str):
-    return _get(f"/predicciones/{restaurante_id}/semana/")
+    return _get_list(f"/predicciones/{restaurante_id}/semana/")
 
 
 def crear_prediccion(data: dict):

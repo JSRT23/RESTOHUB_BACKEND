@@ -2,26 +2,34 @@
 """
 Handlers de eventos del order_service para loyalty_service.
 
-pedido.entregado → acumular puntos + evaluar promociones activas
-pedido.cancelado → revertir puntos si el pedido fue acreditado
+CORRECCIONES:
+1. nivel_anterior se capturaba DESPUÉS de actualizar_nivel() → siempre igual al nuevo.
+   Fix: capturar nivel_anterior ANTES de llamar actualizar_nivel().
+
+2. _evaluar_promociones: AplicacionPromocion.pedido_id es unique=True pero
+   el loop intentaba crear una por cada promoción → IntegrityError en la 2da.
+   Fix: el loop aplica solo la PRIMERA promoción que cumple reglas (break).
+   Una promoción por pedido es el comportamiento correcto de negocio.
+
+3. Comparación de restaurante_id como string vs UUID — estandarizado a str().
 """
 import logging
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-# Puntos por unidad monetaria — configurable por settings si se quiere
 PUNTOS_POR_UNIDAD = 1  # 1 punto por cada unidad de moneda
 
 
 # ─────────────────────────────────────────
-# HELPER: evaluar promociones
+# HELPER: evaluar y aplicar UNA promoción
 # ─────────────────────────────────────────
 
 def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID, data: dict):
     """
     Revisa si alguna promoción activa aplica al pedido.
-    Condiciones soportadas: monto_minimo, plato, categoria, hora, primer_pedido.
+    Aplica solo la PRIMERA que cumple todas las reglas (prioridad: local > global).
+    ✅ Fix: break después de aplicar — evita IntegrityError por unique pedido_id.
     """
     from django.utils import timezone
     from app.loyalty.models import (
@@ -30,7 +38,6 @@ def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID,
         Promocion,
         TransaccionPuntos,
         TipoTransaccion,
-        AlcancePromocion,
     )
     from app.loyalty.events.builders import LoyaltyEventBuilder
     from app.loyalty.events.event_types import LoyaltyEvents
@@ -39,26 +46,24 @@ def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID,
     ahora = timezone.now()
     total = data.get("total", 0)
     detalles = data.get("detalles", [])
-    plato_ids = {d["plato_id"] for d in detalles}
+    plato_ids = {str(d["plato_id"]) for d in detalles if d.get("plato_id")}
 
-    # Promociones activas aplicables a este restaurante
+    from django.db.models import Q
     promociones = Promocion.objects.filter(
         activa=True,
         fecha_inicio__lte=ahora,
         fecha_fin__gte=ahora,
     ).filter(
-        # Global, o específica de este restaurante
-        alcance__in=[AlcancePromocion.GLOBAL, AlcancePromocion.LOCAL],
-    ).prefetch_related("reglas")
+        Q(alcance="global") |
+        Q(alcance="local", restaurante_id=restaurante_id)
+    ).prefetch_related("reglas").order_by(
+        # Prioridad: local primero, luego global
+        "-alcance"
+    )
 
     publisher = get_publisher()
 
     for promo in promociones:
-        # Si es LOCAL verificar que sea para este restaurante
-        if promo.alcance == AlcancePromocion.LOCAL:
-            if str(promo.restaurante_id) != str(restaurante_id):
-                continue
-
         # Idempotencia — no aplicar dos veces la misma promo al mismo pedido
         if AplicacionPromocion.objects.filter(
             promocion=promo, pedido_id=UUID(pedido_id)
@@ -66,37 +71,10 @@ def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID,
             continue
 
         # Evaluar reglas (todas deben cumplirse — AND)
-        cumple = True
-        for regla in promo.reglas.all():
-            if regla.tipo_condicion == "monto_minimo":
-                if float(total) < float(regla.monto_minimo or 0):
-                    cumple = False
-                    break
-
-            elif regla.tipo_condicion == "plato":
-                if str(regla.plato_id) not in plato_ids:
-                    cumple = False
-                    break
-
-            elif regla.tipo_condicion == "hora":
-                hora_actual = ahora.hour
-                if not (regla.hora_inicio <= hora_actual < regla.hora_fin):
-                    cumple = False
-                    break
-
-            elif regla.tipo_condicion == "primer_pedido":
-                ya_tiene = TransaccionPuntos.objects.filter(
-                    cuenta__cliente_id=cliente_id,
-                    tipo=TipoTransaccion.ACUMULACION,
-                ).exists()
-                if ya_tiene:
-                    cumple = False
-                    break
-
-        if not cumple:
+        if not _cumple_reglas(promo, total, plato_ids, ahora, cliente_id):
             continue
 
-        # ── Aplicar promoción ──────────────────────────────
+        # Calcular beneficio
         descuento = 0
         puntos_bonus = 0
 
@@ -147,6 +125,38 @@ def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID,
 
         logger.info(
             f"🎁 Promoción aplicada → {promo.nombre} | pedido {pedido_id}")
+        # ✅ Solo una promoción por pedido — evita IntegrityError unique(pedido_id)
+        break
+
+
+def _cumple_reglas(promo, total, plato_ids: set, ahora, cliente_id: UUID) -> bool:
+    """Evalúa todas las reglas de una promoción. Devuelve True si todas se cumplen."""
+    from app.loyalty.models import TransaccionPuntos, TipoTransaccion
+
+    for regla in promo.reglas.all():
+        if regla.tipo_condicion == "monto_minimo":
+            if float(total) < float(regla.monto_minimo or 0):
+                return False
+
+        elif regla.tipo_condicion == "plato":
+            if str(regla.plato_id) not in plato_ids:
+                return False
+
+        elif regla.tipo_condicion == "hora":
+            if regla.hora_inicio is None or regla.hora_fin is None:
+                return False
+            if not (regla.hora_inicio <= ahora.hour < regla.hora_fin):
+                return False
+
+        elif regla.tipo_condicion == "primer_pedido":
+            ya_tiene = TransaccionPuntos.objects.filter(
+                cuenta__cliente_id=cliente_id,
+                tipo=TipoTransaccion.ACUMULACION,
+            ).exists()
+            if ya_tiene:
+                return False
+
+    return True
 
 
 # ─────────────────────────────────────────
@@ -156,8 +166,7 @@ def _evaluar_promociones(pedido_id: str, cliente_id: UUID, restaurante_id: UUID,
 def handle_pedido_entregado(data: dict) -> None:
     """
     Acumula puntos al cliente cuando el pedido es entregado.
-    Regla: 1 punto por cada unidad de moneda del total.
-    Luego evalúa si alguna promoción aplica.
+    ✅ Fix: nivel_anterior se captura ANTES de actualizar_nivel().
     """
     try:
         from django.db import transaction
@@ -165,7 +174,6 @@ def handle_pedido_entregado(data: dict) -> None:
             CuentaPuntos,
             TransaccionPuntos,
             TipoTransaccion,
-            NivelCliente,
         )
         from app.loyalty.events.builders import LoyaltyEventBuilder
         from app.loyalty.events.event_types import LoyaltyEvents
@@ -180,41 +188,37 @@ def handle_pedido_entregado(data: dict) -> None:
             logger.warning("❌ pedido.entregado sin pedido_id o restaurante_id")
             return
 
-        # Pedidos anónimos (sin cliente) no acumulan puntos
         if not cliente_id_raw:
-            logger.info(
-                f"⏭️ Pedido anónimo — sin acumulación de puntos → {pedido_id}")
+            logger.info(f"⏭️ Pedido anónimo — sin acumulación → {pedido_id}")
             return
 
         cliente_id = UUID(cliente_id_raw)
 
-        # Idempotencia — verificar que no se procesó antes
-        from app.loyalty.models import TransaccionPuntos as TP
-        ya_procesado = TP.objects.filter(
+        # Idempotencia
+        ya_procesado = TransaccionPuntos.objects.filter(
             pedido_id=UUID(pedido_id),
             tipo=TipoTransaccion.ACUMULACION,
         ).exists()
 
         if ya_procesado:
-            logger.info(f"⏭️ Puntos ya acumulados para pedido → {pedido_id}")
+            logger.info(f"⏭️ Puntos ya acumulados → {pedido_id}")
             return
 
         puntos_ganados = max(1, int(float(total) * PUNTOS_POR_UNIDAD))
 
         with transaction.atomic():
-            # Crear o recuperar cuenta de puntos
             cuenta, _ = CuentaPuntos.objects.get_or_create(
                 cliente_id=cliente_id,
                 defaults={"saldo": 0, "puntos_totales_historicos": 0},
             )
 
             saldo_anterior = cuenta.saldo
+            # ✅ CORREGIDO: capturar nivel_anterior ANTES de actualizar
             nivel_anterior = cuenta.nivel
 
-            # Acumular
             cuenta.saldo += puntos_ganados
             cuenta.puntos_totales_historicos += puntos_ganados
-            cuenta.actualizar_nivel()
+            cuenta.actualizar_nivel()  # modifica cuenta.nivel
             cuenta.save(update_fields=[
                         "saldo", "puntos_totales_historicos", "nivel"])
 
@@ -226,7 +230,7 @@ def handle_pedido_entregado(data: dict) -> None:
                 saldo_posterior=cuenta.saldo,
                 pedido_id=UUID(pedido_id),
                 restaurante_id=UUID(restaurante_id),
-                descripcion=f"Acumulación por pedido entregado",
+                descripcion="Acumulación por pedido entregado",
             )
 
         logger.info(
@@ -234,7 +238,7 @@ def handle_pedido_entregado(data: dict) -> None:
             f"+{puntos_ganados} pts | saldo: {cuenta.saldo}"
         )
 
-        # Publicar evento
+        # nivel_anterior capturado antes → ahora sí refleja el cambio real
         get_publisher().publish(
             LoyaltyEvents.PUNTOS_ACUMULADOS,
             LoyaltyEventBuilder.puntos_acumulados(
@@ -243,11 +247,10 @@ def handle_pedido_entregado(data: dict) -> None:
                 restaurante_id=str(restaurante_id),
                 puntos_ganados=puntos_ganados,
                 saldo_anterior=saldo_anterior,
-                nivel_anterior=nivel_anterior,
+                nivel_anterior=nivel_anterior,   # ✅ valor real pre-actualización
             ),
         )
 
-        # Evaluar promociones aplicables
         _evaluar_promociones(
             pedido_id=pedido_id,
             cliente_id=cliente_id,
@@ -263,7 +266,6 @@ def handle_pedido_entregado(data: dict) -> None:
 def handle_pedido_cancelado(data: dict) -> None:
     """
     Revierte los puntos si el pedido había sido acreditado.
-    Solo revierte si existe una TransaccionPuntos de ACUMULACION para ese pedido.
     """
     try:
         from django.db import transaction
@@ -281,32 +283,28 @@ def handle_pedido_cancelado(data: dict) -> None:
 
         cliente_id = UUID(cliente_id_raw)
 
-        # Buscar acumulación previa para este pedido
         try:
             tx_original = TransaccionPuntos.objects.get(
                 pedido_id=UUID(pedido_id),
                 tipo=TipoTransaccion.ACUMULACION,
             )
         except TransaccionPuntos.DoesNotExist:
-            logger.info(
-                f"⏭️ Sin puntos previos para revertir → pedido {pedido_id}")
+            logger.info(f"⏭️ Sin puntos para revertir → {pedido_id}")
             return
 
-        # Idempotencia — verificar que no se revirtió antes
         ya_revertido = TransaccionPuntos.objects.filter(
             pedido_id=UUID(pedido_id),
             tipo=TipoTransaccion.AJUSTE,
         ).exists()
 
         if ya_revertido:
-            logger.info(f"⏭️ Puntos ya revertidos → pedido {pedido_id}")
+            logger.info(f"⏭️ Puntos ya revertidos → {pedido_id}")
             return
 
         puntos_a_revertir = tx_original.puntos
 
         with transaction.atomic():
             cuenta = CuentaPuntos.objects.select_for_update().get(cliente_id=cliente_id)
-
             saldo_anterior = cuenta.saldo
             cuenta.saldo = max(0, cuenta.saldo - puntos_a_revertir)
             cuenta.save(update_fields=["saldo"])
