@@ -16,12 +16,8 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ✅ SECRET_KEY desde env
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-gateway")
-
 DEBUG = os.getenv("DEBUG", "True") == "True"
-
-# ✅ ALLOWED_HOSTS correcto para Docker + desarrollo
 ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
@@ -45,7 +41,8 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
+    # ✅ JWT Middleware — verifica el token en cada request
+    "app.gateway.middleware.jwt_middleware.JWTMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -74,15 +71,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
 ]
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # En desarrollo acepta todos
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 
-# ✅ Sin base de datos — el gateway no tiene modelos propios
-# Solo necesita la DB para django.contrib.admin/auth/sessions
-# que no usamos. Se usa sqlite en memoria para no generar archivo.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",  # ✅ en memoria, no genera db.sqlite3
+        "NAME": ":memory:",
     }
 }
 
@@ -95,11 +89,8 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ─────────────────────────────────────────
-# URLs de microservicios (override via env en Docker)
+# JWT — misma clave que auth_service
 # ─────────────────────────────────────────
-# Estos se leen en cada client module — aquí solo como referencia
-# MENU_SERVICE_URL      = os.getenv("MENU_SERVICE_URL",      "http://menu_service:8000/api/menu")
-# ORDER_SERVICE_URL     = os.getenv("ORDER_SERVICE_URL",     "http://order_service:8000/api/orders")
-# INVENTORY_SERVICE_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory_service:8000/api/inventory")
-# STAFF_SERVICE_URL     = os.getenv("STAFF_SERVICE_URL",     "http://staff_service:8000/api/staff")
-# LOYALTY_SERVICE_URL   = os.getenv("LOYALTY_SERVICE_URL",   "http://loyalty_service:8000/api/loyalty")
+JWT_SECRET_KEY = os.getenv(
+    "JWT_SECRET_KEY", "restohub-jwt-secret-change-in-prod")
+JWT_ALGORITHM = "HS256"

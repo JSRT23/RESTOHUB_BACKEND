@@ -61,6 +61,27 @@ services:
       - restohub_network
 
   # ---------------------------------------------------------------------------
+  # Auth Service
+  # ---------------------------------------------------------------------------
+
+  auth_service:
+    build: ./services/auth_service
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./services/auth_service:/app
+    ports:
+      - "8006:8000"
+    env_file:
+      - ./services/auth_service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - restohub_network
+
+  # ---------------------------------------------------------------------------
   # Menu Service
   # ---------------------------------------------------------------------------
 
@@ -264,7 +285,10 @@ services:
       - INVENTORY_SERVICE_URL=http://inventory_service:8000/api/inventory
       - LOYALTY_SERVICE_URL=http://loyalty_service:8000/api/loyalty
       - STAFF_SERVICE_URL=http://staff_service:8000/api/staff
+      - AUTH_SERVICE_URL=http://auth_service:8000/api/auth
+      - JWT_SECRET_KEY=restohub-jwt-secret-change-in-prod
     depends_on:
+      - auth_service
       - menu_service
       - order_service
       - inventory_service

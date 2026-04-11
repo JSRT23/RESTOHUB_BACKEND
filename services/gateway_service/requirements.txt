@@ -3,3 +3,5 @@ djangorestframework
 graphene-django
 httpx
 django-cors-headers
+PyJWT
+ 

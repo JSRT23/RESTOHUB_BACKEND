@@ -5,7 +5,7 @@ from .types import (
     IngredienteType, PrecioPlatoType,
 )
 from ....client import menu_client
-
+from ....middleware.permissions import get_jwt_user
 # ─────────────────────────────────────────
 # NOTA
 # ─────────────────────────────────────────
@@ -91,42 +91,82 @@ class DesactivarRestaurante(graphene.Mutation):
 # ─────────────────────────────────────────
 # CATEGORÍA
 # ─────────────────────────────────────────
-
 class CrearCategoria(graphene.Mutation):
     class Arguments:
         nombre = graphene.String(required=True)
+        descripcion = graphene.String()
         orden = graphene.Int()
 
     ok = graphene.Boolean()
     categoria = graphene.Field(CategoriaType)
     error = graphene.String()
 
-    def mutate(self, info, nombre, orden=0):
-        data = menu_client.crear_categoria({"nombre": nombre, "orden": orden})
-        if not data:
-            return CrearCategoria(ok=False, error="Error al crear categoría.")
+    def mutate(self, info, nombre, descripcion=None, orden=None):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user or jwt_user.get("rol") != "admin_central":
+            return CrearCategoria(ok=False, error="Solo el admin central puede crear categorías.")
+
+        data = menu_client.crear_categoria({
+            "nombre":      nombre,
+            "descripcion": descripcion,
+            "orden":       orden,
+        })
+        if not data or data.get("_error"):
+            return CrearCategoria(ok=False, error=data.get("detail", "Error al crear categoría.") if data else "Error de conexión.")
         return CrearCategoria(ok=True, categoria=data)
 
 
+# ── Actualizar categoría (solo admin_central) ─────────────────────────────
 class ActualizarCategoria(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
         nombre = graphene.String()
+        descripcion = graphene.String()
         orden = graphene.Int()
 
     ok = graphene.Boolean()
     categoria = graphene.Field(CategoriaType)
     error = graphene.String()
 
-    def mutate(self, info, id, **kwargs):
-        # Filtrar kwargs vacíos
-        payload = {k: v for k, v in kwargs.items() if v is not None}
+    def mutate(self, info, id, nombre=None, descripcion=None, orden=None):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user or jwt_user.get("rol") != "admin_central":
+            return ActualizarCategoria(ok=False, error="Solo el admin central puede editar categorías.")
+
+        payload = {}
+        if nombre is not None:
+            payload["nombre"] = nombre
+        if descripcion is not None:
+            payload["descripcion"] = descripcion
+        if orden is not None:
+            payload["orden"] = orden
+
         data = menu_client.actualizar_categoria(id, payload)
-        if not data:
-            return ActualizarCategoria(ok=False, error="Error al actualizar categoría.")
+        if not data or data.get("_error"):
+            return ActualizarCategoria(ok=False, error=data.get("detail", "Error al actualizar.") if data else "Error de conexión.")
         return ActualizarCategoria(ok=True, categoria=data)
 
 
+# ── Activar categoría ─────────────────────────────────────────────────────
+class ActivarCategoria(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user or jwt_user.get("rol") != "admin_central":
+            return ActivarCategoria(ok=False, error="Sin permiso.")
+
+        data = menu_client.activar_categoria(id)
+        if not data or data.get("_error"):
+            return ActivarCategoria(ok=False, error="Error al activar.")
+        return ActivarCategoria(ok=True)
+
+
+# ── Desactivar categoría ──────────────────────────────────────────────────
 class DesactivarCategoria(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
@@ -135,13 +175,19 @@ class DesactivarCategoria(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, id):
-        result = menu_client.desactivar_categoria(id)
-        return DesactivarCategoria(ok=bool(result))
+        jwt_user = get_jwt_user(info)
+        if not jwt_user or jwt_user.get("rol") != "admin_central":
+            return DesactivarCategoria(ok=False, error="Sin permiso.")
 
+        data = menu_client.desactivar_categoria(id)
+        if not data or data.get("_error"):
+            return DesactivarCategoria(ok=False, error="Error al desactivar.")
+        return DesactivarCategoria(ok=True)
 
 # ─────────────────────────────────────────
 # INGREDIENTE
 # ─────────────────────────────────────────
+
 
 class CrearIngrediente(graphene.Mutation):
     class Arguments:

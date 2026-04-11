@@ -1,0 +1,9 @@
+Django
+djangorestframework
+psycopg2-binary
+PyJWT
+django-cors-headers
+python-decouple
+resend
+dnspython
+ 

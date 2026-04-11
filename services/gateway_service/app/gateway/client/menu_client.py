@@ -146,6 +146,10 @@ def actualizar_categoria(id: str, data: dict):
     return _patch(f"/categorias/{id}/", data)
 
 
+def activar_categoria(categoria_id: str):
+    return _post(f"/categorias/{categoria_id}/activar/")
+
+
 def desactivar_categoria(id: str):
     return _post(f"/categorias/{id}/desactivar/", {})
 
