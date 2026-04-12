@@ -1,3 +1,4 @@
+# gateway_service/app/gateway/client/menu_client.py
 import httpx
 import os
 import socket
@@ -7,10 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_url() -> str:
-    """
-    Resuelve el hostname a IP para evitar DisallowedHost de Django
-    cuando se usa el nombre del servicio Docker como header Host.
-    """
     base = os.getenv("MENU_SERVICE_URL", "http://menu_service:8000/api/menu")
     try:
         hostname = base.split("//")[1].split(":")[0].split("/")[0]
@@ -26,15 +23,14 @@ def _resolve_url() -> str:
 MENU_SERVICE_URL = _resolve_url()
 
 
-def _get(path: str, params: dict = None) -> dict | list | None:
+def _get(path: str, params: dict = None):
     try:
         with httpx.Client(timeout=10) as client:
             response = client.get(f"{MENU_SERVICE_URL}{path}", params=params)
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
-        logger.error("[menu_client] HTTP error %s: %s",
-                     e.response.status_code, path)
+        logger.error("[menu_client] HTTP %s: %s", e.response.status_code, path)
         return None
     except httpx.RequestError as e:
         logger.error("[menu_client] Request error: %s", e)
@@ -48,8 +44,7 @@ def _post(path: str, data: dict) -> dict | None:
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
-        logger.error("[menu_client] HTTP error %s: %s",
-                     e.response.status_code, path)
+        logger.error("[menu_client] HTTP %s: %s", e.response.status_code, path)
         return None
     except httpx.RequestError as e:
         logger.error("[menu_client] Request error: %s", e)
@@ -63,8 +58,7 @@ def _patch(path: str, data: dict) -> dict | None:
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
-        logger.error("[menu_client] HTTP error %s: %s",
-                     e.response.status_code, path)
+        logger.error("[menu_client] HTTP %s: %s", e.response.status_code, path)
         return None
     except httpx.RequestError as e:
         logger.error("[menu_client] Request error: %s", e)
@@ -77,18 +71,12 @@ def _delete(path: str) -> bool:
             response = client.delete(f"{MENU_SERVICE_URL}{path}")
             response.raise_for_status()
             return True
-    except httpx.HTTPStatusError as e:
-        logger.error("[menu_client] HTTP error %s: %s",
-                     e.response.status_code, path)
-        return False
-    except httpx.RequestError as e:
-        logger.error("[menu_client] Request error: %s", e)
+    except Exception as e:
+        logger.error("[menu_client] Delete error: %s", e)
         return False
 
 
-# ─────────────────────────────────────────
-# Restaurante
-# ─────────────────────────────────────────
+# ── Restaurante ────────────────────────────────────────────────────────────
 
 def get_restaurantes(activo=None, pais=None):
     params = {}
@@ -123,9 +111,7 @@ def desactivar_restaurante(id: str):
     return _post(f"/restaurantes/{id}/desactivar/", {})
 
 
-# ─────────────────────────────────────────
-# Categoría
-# ─────────────────────────────────────────
+# ── Categoría ──────────────────────────────────────────────────────────────
 
 def get_categorias(activo=None):
     params = {}
@@ -146,24 +132,66 @@ def actualizar_categoria(id: str, data: dict):
     return _patch(f"/categorias/{id}/", data)
 
 
-def activar_categoria(categoria_id: str):
-    return _post(f"/categorias/{categoria_id}/activar/")
+def activar_categoria(id: str):
+    return _post(f"/categorias/{id}/activar/", {})
 
 
 def desactivar_categoria(id: str):
     return _post(f"/categorias/{id}/desactivar/", {})
 
 
-# ─────────────────────────────────────────
-# Plato
-# ─────────────────────────────────────────
+# ── Ingrediente ────────────────────────────────────────────────────────────
 
-def get_platos(activo=None, categoria_id=None):
+def get_ingredientes(activo=None, restaurante_id=None, disponibles=None):
+    """
+    disponibles=UUID → globales + del restaurante X (para el gerente)
+    restaurante_id=UUID → solo de ese restaurante
+    sin parámetro → todos (admin)
+    """
+    params = {}
+    if activo is not None:
+        params["activo"] = activo
+    if disponibles:
+        params["disponibles"] = disponibles
+    elif restaurante_id:
+        params["restaurante_id"] = restaurante_id
+    return _get("/ingredientes/", params=params) or []
+
+
+def crear_ingrediente(data: dict):
+    # data puede incluir "restaurante" (UUID del restaurante) o no (global)
+    return _post("/ingredientes/", data)
+
+
+def actualizar_ingrediente(id: str, data: dict):
+    return _patch(f"/ingredientes/{id}/", data)
+
+
+def activar_ingrediente(id: str):
+    return _post(f"/ingredientes/{id}/activar/", {})
+
+
+def desactivar_ingrediente(id: str):
+    return _post(f"/ingredientes/{id}/desactivar/", {})
+
+
+# ── Plato ──────────────────────────────────────────────────────────────────
+
+def get_platos(activo=None, categoria_id=None, restaurante_id=None, disponibles=None):
+    """
+    disponibles=UUID → globales + del restaurante X (para el gerente)
+    restaurante_id=UUID → solo de ese restaurante
+    sin parámetro → todos (admin)
+    """
     params = {}
     if activo is not None:
         params["activo"] = activo
     if categoria_id:
         params["categoria"] = categoria_id
+    if disponibles:
+        params["disponibles"] = disponibles
+    elif restaurante_id:
+        params["restaurante_id"] = restaurante_id
     return _get("/platos/", params=params) or []
 
 
@@ -172,6 +200,7 @@ def get_plato(id: str):
 
 
 def crear_plato(data: dict):
+    # data puede incluir "restaurante" (UUID) o no (global)
     return _post("/platos/", data)
 
 
@@ -199,24 +228,7 @@ def quitar_ingrediente_plato(plato_id: str, ingrediente_id: str):
     return _delete(f"/platos/{plato_id}/ingredientes/{ingrediente_id}/")
 
 
-# ─────────────────────────────────────────
-# Ingrediente
-# ─────────────────────────────────────────
-
-def get_ingredientes(activo=None):
-    params = {}
-    if activo is not None:
-        params["activo"] = activo
-    return _get("/ingredientes/", params=params) or []
-
-
-def crear_ingrediente(data: dict):
-    return _post("/ingredientes/", data)
-
-
-# ─────────────────────────────────────────
-# Precio
-# ─────────────────────────────────────────
+# ── Precio ─────────────────────────────────────────────────────────────────
 
 def get_precios(plato_id=None, restaurante_id=None, activo=None):
     params = {}

@@ -1,14 +1,8 @@
 # menu_service/app/menu/serializers.py
-
 from rest_framework import serializers
 from django.utils import timezone
-
 from .models import Restaurante, Categoria, Plato, Ingrediente, PlatoIngrediente, PrecioPlato
 
-
-# ─────────────────────────────────────────
-# RESTAURANTE
-# ─────────────────────────────────────────
 
 class RestauranteSerializer(serializers.ModelSerializer):
     class Meta:
@@ -20,10 +14,6 @@ class RestauranteSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "fecha_creacion", "fecha_actualizacion")
 
 
-# ─────────────────────────────────────────
-# CATEGORIA
-# ─────────────────────────────────────────
-
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Categoria
@@ -31,30 +21,43 @@ class CategoriaSerializer(serializers.ModelSerializer):
         read_only_fields = ("id",)
 
 
-# ─────────────────────────────────────────
-# INGREDIENTE
-# ─────────────────────────────────────────
-
 class IngredienteSerializer(serializers.ModelSerializer):
+    # Expone el UUID del restaurante directamente
+    restaurante_id = serializers.UUIDField(
+        source="restaurante.id", read_only=True, allow_null=True)
+
     class Meta:
         model = Ingrediente
-        fields = ("id", "nombre", "unidad_medida", "descripcion", "activo")
-        read_only_fields = ("id",)
+        fields = ("id", "restaurante_id", "nombre",
+                  "unidad_medida", "descripcion", "activo")
+        read_only_fields = ("id", "restaurante_id")
 
 
-# ─────────────────────────────────────────
-# PLATO INGREDIENTE
-# ─────────────────────────────────────────
+class IngredienteWriteSerializer(serializers.ModelSerializer):
+    """Para crear ingredientes — acepta restaurante (UUID del Restaurante)."""
+    restaurante = serializers.PrimaryKeyRelatedField(
+        queryset=Restaurante.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="UUID del restaurante. null = ingrediente global."
+    )
+
+    class Meta:
+        model = Ingrediente
+        fields = ("restaurante", "nombre", "unidad_medida", "descripcion")
+
+    def validate_nombre(self, value):
+        if not value.strip():
+            raise serializers.ValidationError(
+                "El nombre no puede estar vacío.")
+        return value.strip()
+
 
 class PlatoIngredienteSerializer(serializers.ModelSerializer):
     ingrediente_nombre = serializers.CharField(
-        source="ingrediente.nombre",
-        read_only=True
-    )
+        source="ingrediente.nombre", read_only=True)
     unidad_medida = serializers.CharField(
-        source="ingrediente.unidad_medida",
-        read_only=True
-    )
+        source="ingrediente.unidad_medida", read_only=True)
 
     class Meta:
         model = PlatoIngrediente
@@ -75,25 +78,25 @@ class PlatoIngredienteWriteSerializer(serializers.ModelSerializer):
         return value
 
 
-# ─────────────────────────────────────────
-# PRECIO PLATO
-# ─────────────────────────────────────────
-
 class PrecioPlatoSerializer(serializers.ModelSerializer):
     moneda = serializers.CharField(source="restaurante.moneda", read_only=True)
     restaurante_nombre = serializers.CharField(
         source="restaurante.nombre", read_only=True)
     esta_vigente = serializers.BooleanField(read_only=True)
+    # Exponer plato_id y restaurante_id explícitos (el gateway los espera)
+    plato_id = serializers.UUIDField(source="plato.id", read_only=True)
+    restaurante_id = serializers.UUIDField(
+        source="restaurante.id", read_only=True)
 
     class Meta:
         model = PrecioPlato
         fields = (
-            "id", "plato", "restaurante", "restaurante_nombre",
+            "id", "plato_id", "restaurante_id", "restaurante_nombre",
             "precio", "moneda", "fecha_inicio", "fecha_fin",
             "activo", "esta_vigente",
         )
-        read_only_fields = (
-            "id", "moneda", "restaurante_nombre", "esta_vigente")
+        read_only_fields = ("id", "moneda", "restaurante_nombre", "esta_vigente",
+                            "plato_id", "restaurante_id")
 
     def validate(self, attrs):
         return _validar_precio(attrs)
@@ -110,77 +113,75 @@ class PrecioPlatoWriteSerializer(serializers.ModelSerializer):
 
 
 def _validar_precio(attrs: dict, instance=None) -> dict:
-    """
-    Validación centralizada para PrecioPlato.
-    Cubre tanto creación como actualización, evitando duplicar lógica
-    entre PrecioPlatoSerializer y PrecioPlatoWriteSerializer.
-    """
     precio = attrs.get("precio")
     fecha_inicio = attrs.get("fecha_inicio")
     fecha_fin = attrs.get("fecha_fin")
     errores = {}
-
     if precio is not None and precio <= 0:
         errores["precio"] = "El precio debe ser mayor a 0."
-
     if fecha_fin and fecha_inicio and fecha_fin <= fecha_inicio:
         errores["fecha_fin"] = "La fecha de fin debe ser posterior a la fecha de inicio."
-
-    # Solo validar fecha pasada en creación (no en actualización)
-    es_creacion = instance is None
-    if es_creacion and fecha_inicio and fecha_inicio < timezone.now():
+    if instance is None and fecha_inicio and fecha_inicio < timezone.now():
         errores["fecha_inicio"] = "La fecha de inicio no puede ser en el pasado."
-
     if errores:
         raise serializers.ValidationError(errores)
-
     return attrs
 
 
-# ─────────────────────────────────────────
-# PLATO
-# ─────────────────────────────────────────
-
 class PlatoSerializer(serializers.ModelSerializer):
-    """Serializer completo — incluye ingredientes y precios (para GET detalle)."""
+    """Detalle completo — ingredientes y precios anidados."""
     categoria_nombre = serializers.CharField(
         source="categoria.nombre", read_only=True)
+    restaurante_id = serializers.UUIDField(
+        source="restaurante.id", read_only=True, allow_null=True)
     ingredientes = PlatoIngredienteSerializer(many=True, read_only=True)
     precios = PrecioPlatoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Plato
         fields = (
-            "id", "nombre", "descripcion",
+            "id", "restaurante_id", "nombre", "descripcion",
             "categoria", "categoria_nombre",
             "imagen", "activo",
             "fecha_creacion", "fecha_actualizacion",
             "ingredientes", "precios",
         )
-        read_only_fields = ("id", "fecha_creacion", "fecha_actualizacion")
+        read_only_fields = ("id", "restaurante_id",
+                            "fecha_creacion", "fecha_actualizacion")
 
 
 class PlatoListSerializer(serializers.ModelSerializer):
-    """Serializer ligero — para listar platos sin anidar ingredientes ni precios."""
+    """Ligero — para listas."""
     categoria_nombre = serializers.CharField(
         source="categoria.nombre", read_only=True)
+    restaurante_id = serializers.UUIDField(
+        source="restaurante.id", read_only=True, allow_null=True)
 
     class Meta:
         model = Plato
         fields = (
-            "id", "nombre", "descripcion",
+            "id", "restaurante_id", "nombre", "descripcion",
             "categoria", "categoria_nombre",
             "imagen", "activo",
             "fecha_creacion", "fecha_actualizacion",
         )
-        read_only_fields = ("id", "fecha_creacion", "fecha_actualizacion")
+        read_only_fields = ("id", "restaurante_id",
+                            "fecha_creacion", "fecha_actualizacion")
 
 
 class PlatoWriteSerializer(serializers.ModelSerializer):
-    """Serializer para crear/actualizar platos."""
+    """Para crear/actualizar platos — acepta restaurante (UUID)."""
+    restaurante = serializers.PrimaryKeyRelatedField(
+        queryset=Restaurante.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="UUID del restaurante. null = plato global."
+    )
+
     class Meta:
         model = Plato
-        fields = ("nombre", "descripcion", "categoria", "imagen", "activo")
+        fields = ("restaurante", "nombre", "descripcion",
+                  "categoria", "imagen", "activo")
 
     def validate_nombre(self, value):
         if not value.strip():
@@ -189,11 +190,7 @@ class PlatoWriteSerializer(serializers.ModelSerializer):
         return value.strip()
 
 
-# ─────────────────────────────────────────
-# MENU RESTAURANTE
-# GET /restaurantes/{id}/menu/
-# Retorna platos activos con precio vigente agrupados por categoría.
-# ─────────────────────────────────────────
+# ── Menú público agrupado por categoría ──────────────────────────────────
 
 class MenuPlatoSerializer(serializers.Serializer):
     plato_id = serializers.UUIDField(source="id")
@@ -213,12 +210,12 @@ class MenuPlatoSerializer(serializers.Serializer):
         )
 
     def get_precio(self, obj):
-        precio = self._precio_vigente(obj)
-        return str(precio.precio) if precio else None
+        p = self._precio_vigente(obj)
+        return str(p.precio) if p else None
 
     def get_moneda(self, obj):
-        precio = self._precio_vigente(obj)
-        return precio.restaurante.moneda if precio else None
+        p = self._precio_vigente(obj)
+        return p.restaurante.moneda if p else None
 
 
 class MenuCategoriaSerializer(serializers.Serializer):
@@ -252,9 +249,6 @@ class MenuRestauranteSerializer(serializers.Serializer):
             platos__precios__restaurante=obj,
             platos__precios__activo=True,
         ).distinct().order_by("orden")
-
         return MenuCategoriaSerializer(
-            categorias,
-            many=True,
-            context={"restaurante_id": obj.id}
+            categorias, many=True, context={"restaurante_id": obj.id}
         ).data

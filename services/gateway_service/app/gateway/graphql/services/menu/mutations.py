@@ -6,24 +6,9 @@ from .types import (
 )
 from ....client import menu_client
 from ....middleware.permissions import get_jwt_user
-# ─────────────────────────────────────────
-# NOTA
-# ─────────────────────────────────────────
-# Las mutations retornan el dict crudo de la API.
-# graphene lo resuelve usando los resolvers definidos en cada Type.
-#
-# LIMITACIÓN CONOCIDA:
-# CrearPlato/ActualizarPlato usan PlatoWriteSerializer en el backend,
-# que no incluye 'id' en la respuesta. El campo 'plato' del resultado
-# tendrá id=null. El frontend debe hacer una query separada si necesita
-# el objeto completo con id, o el backend debe cambiarse a retornar
-# PlatoSerializer en la respuesta de create/update.
-# ─────────────────────────────────────────
 
 
-# ─────────────────────────────────────────
-# RESTAURANTE
-# ─────────────────────────────────────────
+# ── Restaurante ────────────────────────────────────────────────────────────
 
 class CrearRestaurante(graphene.Mutation):
     class Arguments:
@@ -67,30 +52,23 @@ class ActualizarRestaurante(graphene.Mutation):
 class ActivarRestaurante(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
-
-    def mutate(self, info, id):
-        result = menu_client.activar_restaurante(id)
-        return ActivarRestaurante(ok=bool(result))
+    def mutate(self, info, id): return ActivarRestaurante(
+        ok=bool(menu_client.activar_restaurante(id)))
 
 
 class DesactivarRestaurante(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
-
-    def mutate(self, info, id):
-        result = menu_client.desactivar_restaurante(id)
-        return DesactivarRestaurante(ok=bool(result))
+    def mutate(self, info, id): return DesactivarRestaurante(
+        ok=bool(menu_client.desactivar_restaurante(id)))
 
 
-# ─────────────────────────────────────────
-# CATEGORÍA
-# ─────────────────────────────────────────
+# ── Categoría (solo admin_central) ────────────────────────────────────────
+
 class CrearCategoria(graphene.Mutation):
     class Arguments:
         nombre = graphene.String(required=True)
@@ -105,18 +83,13 @@ class CrearCategoria(graphene.Mutation):
         jwt_user = get_jwt_user(info)
         if not jwt_user or jwt_user.get("rol") != "admin_central":
             return CrearCategoria(ok=False, error="Solo el admin central puede crear categorías.")
-
-        data = menu_client.crear_categoria({
-            "nombre":      nombre,
-            "descripcion": descripcion,
-            "orden":       orden,
-        })
-        if not data or data.get("_error"):
-            return CrearCategoria(ok=False, error=data.get("detail", "Error al crear categoría.") if data else "Error de conexión.")
+        data = menu_client.crear_categoria(
+            {"nombre": nombre, "descripcion": descripcion, "orden": orden})
+        if not data:
+            return CrearCategoria(ok=False, error="Error al crear categoría.")
         return CrearCategoria(ok=True, categoria=data)
 
 
-# ── Actualizar categoría (solo admin_central) ─────────────────────────────
 class ActualizarCategoria(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
@@ -128,30 +101,20 @@ class ActualizarCategoria(graphene.Mutation):
     categoria = graphene.Field(CategoriaType)
     error = graphene.String()
 
-    def mutate(self, info, id, nombre=None, descripcion=None, orden=None):
+    def mutate(self, info, id, **kwargs):
         jwt_user = get_jwt_user(info)
         if not jwt_user or jwt_user.get("rol") != "admin_central":
             return ActualizarCategoria(ok=False, error="Solo el admin central puede editar categorías.")
-
-        payload = {}
-        if nombre is not None:
-            payload["nombre"] = nombre
-        if descripcion is not None:
-            payload["descripcion"] = descripcion
-        if orden is not None:
-            payload["orden"] = orden
-
+        payload = {k: v for k, v in kwargs.items() if v is not None}
         data = menu_client.actualizar_categoria(id, payload)
-        if not data or data.get("_error"):
-            return ActualizarCategoria(ok=False, error=data.get("detail", "Error al actualizar.") if data else "Error de conexión.")
+        if not data:
+            return ActualizarCategoria(ok=False, error="Error al actualizar.")
         return ActualizarCategoria(ok=True, categoria=data)
 
 
-# ── Activar categoría ─────────────────────────────────────────────────────
 class ActivarCategoria(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
 
@@ -159,18 +122,12 @@ class ActivarCategoria(graphene.Mutation):
         jwt_user = get_jwt_user(info)
         if not jwt_user or jwt_user.get("rol") != "admin_central":
             return ActivarCategoria(ok=False, error="Sin permiso.")
-
-        data = menu_client.activar_categoria(id)
-        if not data or data.get("_error"):
-            return ActivarCategoria(ok=False, error="Error al activar.")
-        return ActivarCategoria(ok=True)
+        return ActivarCategoria(ok=bool(menu_client.activar_categoria(id)))
 
 
-# ── Desactivar categoría ──────────────────────────────────────────────────
 class DesactivarCategoria(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
 
@@ -178,60 +135,107 @@ class DesactivarCategoria(graphene.Mutation):
         jwt_user = get_jwt_user(info)
         if not jwt_user or jwt_user.get("rol") != "admin_central":
             return DesactivarCategoria(ok=False, error="Sin permiso.")
+        return DesactivarCategoria(ok=bool(menu_client.desactivar_categoria(id)))
 
-        data = menu_client.desactivar_categoria(id)
-        if not data or data.get("_error"):
-            return DesactivarCategoria(ok=False, error="Error al desactivar.")
-        return DesactivarCategoria(ok=True)
 
-# ─────────────────────────────────────────
-# INGREDIENTE
-# ─────────────────────────────────────────
-
+# ── Ingrediente ────────────────────────────────────────────────────────────
 
 class CrearIngrediente(graphene.Mutation):
+    """
+    Crea un ingrediente.
+    - Si restaurante_id es null → ingrediente global (solo admin_central debería hacerlo)
+    - Si restaurante_id tiene valor → ingrediente del restaurante (gerente)
+    """
     class Arguments:
         nombre = graphene.String(required=True)
         unidad_medida = graphene.String(required=True)
+        descripcion = graphene.String()
+        restaurante_id = graphene.ID(
+            description="UUID del restaurante. null = ingrediente global.")
+
+    ok = graphene.Boolean()
+    ingrediente = graphene.Field(IngredienteType)
+    error = graphene.String()
+
+    def mutate(self, info, nombre, unidad_medida, descripcion=None, restaurante_id=None):
+        payload = {"nombre": nombre, "unidad_medida": unidad_medida,
+                   "descripcion": descripcion}
+        if restaurante_id:
+            payload["restaurante"] = restaurante_id
+        data = menu_client.crear_ingrediente(payload)
+        if not data:
+            return CrearIngrediente(ok=False, error="Error al crear ingrediente.")
+        return CrearIngrediente(ok=True, ingrediente=data)
+
+
+class ActualizarIngrediente(graphene.Mutation):
+    """Actualiza nombre y descripción (la unidad de medida no cambia)."""
+    class Arguments:
+        id = graphene.ID(required=True)
+        nombre = graphene.String()
         descripcion = graphene.String()
 
     ok = graphene.Boolean()
     ingrediente = graphene.Field(IngredienteType)
     error = graphene.String()
 
-    def mutate(self, info, nombre, unidad_medida, descripcion=None):
-        data = menu_client.crear_ingrediente({
-            "nombre":        nombre,
-            "unidad_medida": unidad_medida,
-            "descripcion":   descripcion,
-        })
+    def mutate(self, info, id, nombre=None, descripcion=None):
+        payload = {}
+        if nombre is not None:
+            payload["nombre"] = nombre
+        if descripcion is not None:
+            payload["descripcion"] = descripcion
+        data = menu_client.actualizar_ingrediente(id, payload)
         if not data:
-            return CrearIngrediente(ok=False, error="Error al crear ingrediente.")
-        return CrearIngrediente(ok=True, ingrediente=data)
+            return ActualizarIngrediente(ok=False, error="Error al actualizar ingrediente.")
+        return ActualizarIngrediente(ok=True, ingrediente=data)
 
 
-# ─────────────────────────────────────────
-# PLATO
-# ─────────────────────────────────────────
+class ActivarIngrediente(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+    ok = graphene.Boolean()
+    error = graphene.String()
+    def mutate(self, info, id): return ActivarIngrediente(
+        ok=bool(menu_client.activar_ingrediente(id)))
+
+
+class DesactivarIngrediente(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+    ok = graphene.Boolean()
+    error = graphene.String()
+    def mutate(self, info, id): return DesactivarIngrediente(
+        ok=bool(menu_client.desactivar_ingrediente(id)))
+
+
+# ── Plato ──────────────────────────────────────────────────────────────────
 
 class CrearPlato(graphene.Mutation):
+    """
+    restaurante_id = null → plato global (admin_central)
+    restaurante_id = UUID → plato del restaurante (gerente)
+    """
     class Arguments:
         nombre = graphene.String(required=True)
         descripcion = graphene.String(required=True)
         categoria_id = graphene.ID()
         imagen = graphene.String()
+        restaurante_id = graphene.ID(
+            description="UUID del restaurante. null = plato global.")
 
     ok = graphene.Boolean()
     plato = graphene.Field(PlatoType)
     error = graphene.String()
 
-    def mutate(self, info, nombre, descripcion, categoria_id=None, imagen=None):
-        data = menu_client.crear_plato({
-            "nombre":       nombre,
-            "descripcion":  descripcion,
-            "categoria_id": categoria_id,
-            "imagen":       imagen,
-        })
+    def mutate(self, info, nombre, descripcion, categoria_id=None, imagen=None, restaurante_id=None):
+        payload = {
+            "nombre": nombre, "descripcion": descripcion,
+            "categoria": categoria_id, "imagen": imagen,
+        }
+        if restaurante_id:
+            payload["restaurante"] = restaurante_id
+        data = menu_client.crear_plato(payload)
         if not data:
             return CrearPlato(ok=False, error="Error al crear plato.")
         return CrearPlato(ok=True, plato=data)
@@ -262,23 +266,19 @@ class ActualizarPlato(graphene.Mutation):
 class ActivarPlato(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
-
-    def mutate(self, info, id):
-        return ActivarPlato(ok=bool(menu_client.activar_plato(id)))
+    def mutate(self, info, id): return ActivarPlato(
+        ok=bool(menu_client.activar_plato(id)))
 
 
 class DesactivarPlato(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
-
-    def mutate(self, info, id):
-        return DesactivarPlato(ok=bool(menu_client.desactivar_plato(id)))
+    def mutate(self, info, id): return DesactivarPlato(
+        ok=bool(menu_client.desactivar_plato(id)))
 
 
 class AgregarIngredientePlato(graphene.Mutation):
@@ -292,12 +292,11 @@ class AgregarIngredientePlato(graphene.Mutation):
 
     def mutate(self, info, plato_id, ingrediente_id, cantidad):
         result = menu_client.agregar_ingrediente_plato(
-            plato_id,
-            {"ingrediente": ingrediente_id, "cantidad": str(cantidad)},
+            plato_id, {"ingrediente": ingrediente_id,
+                       "cantidad": str(cantidad)}
         )
         return AgregarIngredientePlato(
-            ok=bool(result),
-            error=None if result else "Error al agregar ingrediente.",
+            ok=bool(result), error=None if result else "Error al agregar ingrediente."
         )
 
 
@@ -312,14 +311,11 @@ class QuitarIngredientePlato(graphene.Mutation):
     def mutate(self, info, plato_id, ingrediente_id):
         result = menu_client.quitar_ingrediente_plato(plato_id, ingrediente_id)
         return QuitarIngredientePlato(
-            ok=bool(result),
-            error=None if result else "Error al quitar ingrediente.",
+            ok=bool(result), error=None if result else "Error al quitar ingrediente."
         )
 
 
-# ─────────────────────────────────────────
-# PRECIO
-# ─────────────────────────────────────────
+# ── Precio ─────────────────────────────────────────────────────────────────
 
 class CrearPrecioPlato(graphene.Mutation):
     class Arguments:
@@ -335,11 +331,8 @@ class CrearPrecioPlato(graphene.Mutation):
 
     def mutate(self, info, plato_id, restaurante_id, precio, fecha_inicio, fecha_fin=None):
         data = menu_client.crear_precio({
-            "plato":        plato_id,
-            "restaurante":  restaurante_id,
-            "precio":       str(precio),
-            "fecha_inicio": fecha_inicio,
-            "fecha_fin":    fecha_fin,
+            "plato": plato_id, "restaurante": restaurante_id,
+            "precio": str(precio), "fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin,
         })
         if not data:
             return CrearPrecioPlato(ok=False, error="Error al crear precio.")
@@ -349,28 +342,22 @@ class CrearPrecioPlato(graphene.Mutation):
 class ActivarPrecio(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
-
-    def mutate(self, info, id):
-        return ActivarPrecio(ok=bool(menu_client.activar_precio(id)))
+    def mutate(self, info, id): return ActivarPrecio(
+        ok=bool(menu_client.activar_precio(id)))
 
 
 class DesactivarPrecio(graphene.Mutation):
     class Arguments:
         id = graphene.ID(required=True)
-
     ok = graphene.Boolean()
     error = graphene.String()
+    def mutate(self, info, id): return DesactivarPrecio(
+        ok=bool(menu_client.desactivar_precio(id)))
 
-    def mutate(self, info, id):
-        return DesactivarPrecio(ok=bool(menu_client.desactivar_precio(id)))
 
-
-# ─────────────────────────────────────────
-# REGISTRO
-# ─────────────────────────────────────────
+# ── Registro ───────────────────────────────────────────────────────────────
 
 class MenuMutation(graphene.ObjectType):
     # Restaurante
@@ -382,10 +369,14 @@ class MenuMutation(graphene.ObjectType):
     # Categoría
     crear_categoria = CrearCategoria.Field()
     actualizar_categoria = ActualizarCategoria.Field()
+    activar_categoria = ActivarCategoria.Field()
     desactivar_categoria = DesactivarCategoria.Field()
 
-    # Ingrediente
+    # Ingrediente — ahora completo
     crear_ingrediente = CrearIngrediente.Field()
+    actualizar_ingrediente = ActualizarIngrediente.Field()
+    activar_ingrediente = ActivarIngrediente.Field()
+    desactivar_ingrediente = DesactivarIngrediente.Field()
 
     # Plato
     crear_plato = CrearPlato.Field()

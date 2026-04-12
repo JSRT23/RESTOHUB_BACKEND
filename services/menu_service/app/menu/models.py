@@ -1,13 +1,14 @@
 # menu_service/app/menu/models.py
+# CAMBIO ARQUITECTÓNICO: Ingrediente y Plato ahora tienen FK opcional a Restaurante.
+# restaurante = null  → global (visible para todos, creado por admin_central)
+# restaurante = X     → local de ese restaurante (creado/gestionado por su gerente)
+# Estrategia de query: gerente ve sus propios + los globales.
+
 import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-
-# ─────────────────────────────────────────
-# CHOICES
-# ─────────────────────────────────────────
 
 class Moneda(models.TextChoices):
     COP = "COP", "Peso colombiano"
@@ -28,30 +29,15 @@ class UnidadMedida(models.TextChoices):
     PORCION = "por", "Porción"
 
 
-# ─────────────────────────────────────────
-# MODELOS
-# ─────────────────────────────────────────
-
 class Restaurante(models.Model):
-    """
-    Representa un local físico de la cadena.
-    La moneda se valida con choices ISO 4217 para consistencia
-    con order_service y futuros reportes financieros multi-país.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     nombre = models.CharField(max_length=255)
     pais = models.CharField(max_length=100)
     ciudad = models.CharField(max_length=100)
     direccion = models.TextField()
-
     moneda = models.CharField(
-        max_length=10,
-        choices=Moneda.choices,
-        default=Moneda.COP
-    )
+        max_length=10, choices=Moneda.choices, default=Moneda.COP)
     activo = models.BooleanField(default=True)
-
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -65,12 +51,7 @@ class Restaurante(models.Model):
 
 
 class Categoria(models.Model):
-    """
-    Catálogo global de categorías (Entradas, Platos fuertes, Postres...).
-    Son globales para toda la cadena — cada restaurante elige qué platos
-    de cada categoría activa mediante PrecioPlato.activo.
-    El campo 'orden' permite controlar el orden de aparición en el menú.
-    """
+    """Categorías GLOBALES — gestionadas solo por admin_central."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nombre = models.CharField(max_length=100, unique=True)
     orden = models.PositiveIntegerField(default=0)
@@ -85,58 +66,32 @@ class Categoria(models.Model):
         return self.nombre
 
 
-class Plato(models.Model):
-    """
-    Catálogo global de platos — Opción A.
-    Un plato existe una sola vez en el sistema. Cada restaurante lo activa
-    y le asigna su precio mediante PrecioPlato. Esto garantiza un plato_id
-    único y estable para order_service (snapshots), inventory_service
-    (trazabilidad de ingredientes) y loyalty_service (promociones globales).
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    nombre = models.CharField(max_length=255)
-    descripcion = models.TextField()
-
-    categoria = models.ForeignKey(
-        Categoria,
-        on_delete=models.SET_NULL,  # si se elimina la categoría, el plato no desaparece
-        null=True,
-        blank=True,
-        related_name="platos"
-    )
-
-    imagen = models.URLField(blank=True, null=True)
-    activo = models.BooleanField(default=True)
-
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_actualizacion = models.DateTimeField(
-        auto_now=True)  # auditoría y event sourcing
-
-    class Meta:
-        verbose_name = "Plato"
-        verbose_name_plural = "Platos"
-        ordering = ["nombre"]
-
-    def __str__(self):
-        return self.nombre
-
-
 class Ingrediente(models.Model):
     """
-    Catálogo global de ingredientes.
-    Compartido con inventory_service para trazabilidad de lotes
-    y control de stock. El campo activo permite descontinuar un
-    ingrediente sin eliminar el historial.
+    Ingrediente con FK opcional a Restaurante.
+
+    restaurante = null  → ingrediente global (admin_central, visible en toda la cadena)
+    restaurante = X     → ingrediente local de ese restaurante (gestionado por su gerente)
+
+    Estrategia de query:
+      Gerente ve: restaurante=su_id OR restaurante=null
+      Admin ve: todos
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    nombre = models.CharField(max_length=255, unique=True)
-    unidad_medida = models.CharField(
-        max_length=10,
-        choices=UnidadMedida.choices,
-        default=UnidadMedida.UNIDAD
+    # FK opcional — null = global
+    restaurante = models.ForeignKey(
+        Restaurante,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="ingredientes",
+        help_text="null = global (toda la cadena). Asignado = exclusivo de ese restaurante."
     )
+
+    nombre = models.CharField(max_length=255)
+    unidad_medida = models.CharField(
+        max_length=10, choices=UnidadMedida.choices, default=UnidadMedida.UNIDAD)
     descripcion = models.TextField(blank=True, null=True)
     activo = models.BooleanField(default=True)
 
@@ -144,20 +99,69 @@ class Ingrediente(models.Model):
         verbose_name = "Ingrediente"
         verbose_name_plural = "Ingredientes"
         ordering = ["nombre"]
+        # El mismo nombre puede existir en diferentes restaurantes
+        # pero no puede repetirse dentro del mismo contexto (global o mismo restaurante)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["nombre", "restaurante"],
+                name="unique_ingrediente_nombre_restaurante"
+            )
+        ]
 
     def __str__(self):
-        return f"{self.nombre} ({self.unidad_medida})"
+        scope = self.restaurante.nombre if self.restaurante else "Global"
+        return f"{self.nombre} ({self.unidad_medida}) [{scope}]"
 
 
-class PlatoIngrediente(models.Model):
+class Plato(models.Model):
     """
-    Relación M2M entre Plato e Ingrediente con cantidad.
-    unique_together evita duplicar el mismo ingrediente en el mismo plato.
-    Esta tabla es la fuente de verdad para inventory_service al calcular
-    el consumo de stock por pedido.
+    Plato con FK opcional a Restaurante.
+
+    restaurante = null  → plato global (admin_central)
+    restaurante = X     → plato local de ese restaurante (gerente)
+
+    El gerente crea platos propios de su restaurante y les asigna precio
+    mediante PrecioPlato. Los platos globales también pueden tener PrecioPlato
+    específico por restaurante.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
+    # FK opcional — null = global
+    restaurante = models.ForeignKey(
+        Restaurante,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="platos",
+        help_text="null = global. Asignado = exclusivo de ese restaurante."
+    )
+
+    nombre = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    categoria = models.ForeignKey(
+        Categoria,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="platos"
+    )
+    imagen = models.URLField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Plato"
+        verbose_name_plural = "Platos"
+        ordering = ["nombre"]
+
+    def __str__(self):
+        scope = self.restaurante.nombre if self.restaurante else "Global"
+        return f"{self.nombre} [{scope}]"
+
+
+class PlatoIngrediente(models.Model):
+    """Receta del plato — ingredientes con cantidad."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plato = models.ForeignKey(
         Plato, on_delete=models.CASCADE, related_name="ingredientes")
     ingrediente = models.ForeignKey(Ingrediente, on_delete=models.CASCADE)
@@ -188,29 +192,18 @@ class PlatoIngrediente(models.Model):
 
 class PrecioPlato(models.Model):
     """
-    Precio de un plato global en un restaurante específico.
-    Este modelo es el 'activador' del plato en cada local:
-    si no existe un PrecioPlato activo para un restaurante, ese
-    plato no aparece en su menú.
-
-    Soporta historial de precios por fechas (fecha_inicio/fecha_fin)
-    para auditoría y cumplimiento del documento RestoHub.
-
-    Regla de negocio: solo puede existir un precio activo por
-    combinación plato+restaurante en un momento dado.
+    Precio de un plato en un restaurante específico.
+    Funciona para platos globales Y locales.
+    Es el 'activador' del plato en el menú de cada restaurante.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     plato = models.ForeignKey(
         Plato, on_delete=models.CASCADE, related_name="precios")
     restaurante = models.ForeignKey(
         Restaurante, on_delete=models.CASCADE, related_name="precios")
-
     precio = models.DecimalField(max_digits=10, decimal_places=2)
-
     fecha_inicio = models.DateTimeField()
     fecha_fin = models.DateTimeField(blank=True, null=True)
-
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -226,16 +219,12 @@ class PrecioPlato(models.Model):
 
     def clean(self):
         errores = {}
-
         if self.precio is not None and self.precio <= 0:
             errores["precio"] = "El precio debe ser mayor a 0."
-
         if self.fecha_fin and self.fecha_inicio and self.fecha_fin <= self.fecha_inicio:
-            errores["fecha_fin"] = "La fecha de fin debe ser posterior a la fecha de inicio."
-
+            errores["fecha_fin"] = "La fecha de fin debe ser posterior a la de inicio."
         if not self.pk and self.fecha_inicio and self.fecha_inicio < timezone.now():
             errores["fecha_inicio"] = "La fecha de inicio no puede ser en el pasado."
-
         if errores:
             raise ValidationError(errores)
 
@@ -245,18 +234,13 @@ class PrecioPlato(models.Model):
 
     @property
     def esta_vigente(self):
-        """Retorna True si el precio está activo y dentro del rango de fechas."""
         ahora = timezone.now()
-
         if not self.activo:
             return False
-
         if self.fecha_inicio and self.fecha_inicio > ahora:
             return False
-
         if self.fecha_fin and self.fecha_fin < ahora:
             return False
-
         return True
 
     def __str__(self):

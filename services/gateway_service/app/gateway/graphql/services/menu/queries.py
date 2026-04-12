@@ -1,8 +1,4 @@
 # gateway_service/app/gateway/graphql/services/menu/queries.py
-# CORRECCIÓN: resolve_menu_restaurante usaba plato.get("categoria")
-# pero PlatoListSerializer retorna "categoria_id" → todos los platos
-# terminaban en el grupo "Otros". Fix: usar "categoria_id".
-
 import graphene
 from .types import (
     RestauranteType, CategoriaType, PlatoType,
@@ -15,34 +11,49 @@ from ....client import menu_client
 class MenuQuery(graphene.ObjectType):
 
     restaurantes = graphene.List(
-        RestauranteType,
-        activo=graphene.Boolean(),
-        pais=graphene.String(),
-    )
+        RestauranteType, activo=graphene.Boolean(), pais=graphene.String())
     restaurante = graphene.Field(
-        RestauranteType,
-        id=graphene.ID(required=True),
-    )
+        RestauranteType, id=graphene.ID(required=True))
     menu_restaurante = graphene.Field(
-        MenuRestauranteType,
-        restaurante_id=graphene.ID(required=True),
-        description="Menú activo del restaurante agrupado por categoría",
+        MenuRestauranteType, restaurante_id=graphene.ID(required=True),
+        description="Menú activo del restaurante agrupado por categoría"
     )
+
     categorias = graphene.List(CategoriaType, activo=graphene.Boolean())
     categoria = graphene.Field(CategoriaType, id=graphene.ID(required=True))
+
     platos = graphene.List(
         PlatoType,
         activo=graphene.Boolean(),
         categoria_id=graphene.ID(),
+        restaurante_id=graphene.ID(
+            description="Solo platos de ese restaurante."
+        ),
+        disponibles=graphene.ID(
+            description="Platos globales + platos del restaurante X. Usar por el gerente."
+        ),
     )
     plato = graphene.Field(PlatoType, id=graphene.ID(required=True))
-    ingredientes = graphene.List(IngredienteType, activo=graphene.Boolean())
+
+    ingredientes = graphene.List(
+        IngredienteType,
+        activo=graphene.Boolean(),
+        restaurante_id=graphene.ID(
+            description="Solo ingredientes de ese restaurante."
+        ),
+        disponibles=graphene.ID(
+            description="Ingredientes globales + del restaurante X. Usar por el gerente."
+        ),
+    )
+
     precios = graphene.List(
         PrecioPlatoType,
         plato_id=graphene.ID(),
         restaurante_id=graphene.ID(),
         activo=graphene.Boolean(),
     )
+
+    # ── Resolvers ─────────────────────────────────────────────────────────
 
     def resolve_restaurantes(self, info, activo=None, pais=None):
         return menu_client.get_restaurantes(activo=activo, pais=pais) or []
@@ -57,18 +68,17 @@ class MenuQuery(graphene.ObjectType):
 
         moneda = restaurante.get("moneda", "COP")
 
-        # Precios activos indexados por plato_id
         precios_raw = menu_client.get_precios(
-            restaurante_id=restaurante_id, activo=True
-        ) or []
+            restaurante_id=restaurante_id, activo=True) or []
         precios_por_plato = {}
         for p in precios_raw:
-            # ✅ El serializer retorna "plato_id" no "plato"
             pid = str(p.get("plato_id", ""))
             if pid:
                 precios_por_plato[pid] = p
 
-        platos_raw = menu_client.get_platos(activo=True) or []
+        # Menú: platos globales + platos del restaurante que tengan precio activo
+        platos_raw = menu_client.get_platos(
+            activo=True, disponibles=restaurante_id) or []
         categorias_raw = menu_client.get_categorias(activo=True) or []
         categorias_idx = {str(c["id"]): c for c in categorias_raw}
 
@@ -89,8 +99,6 @@ class MenuQuery(graphene.ObjectType):
                 precio=str(precio_obj.get("precio", "0")),
                 moneda=moneda,
             )
-
-            # ✅ CORREGIDO: el serializer retorna "categoria_id" no "categoria"
             cat_id = str(plato.get("categoria_id") or "")
             if cat_id and cat_id in categorias_idx:
                 grupos.setdefault(cat_id, []).append(menu_plato)
@@ -104,18 +112,13 @@ class MenuQuery(graphene.ObjectType):
             if not platos_cat:
                 continue
             categorias_result.append(MenuCategoriaType(
-                categoria_id=cat_id,
-                nombre=cat.get("nombre", ""),
-                orden=cat.get("orden", 0),
-                platos=platos_cat,
+                categoria_id=cat_id, nombre=cat.get("nombre", ""),
+                orden=cat.get("orden", 0), platos=platos_cat,
             ))
 
         if sin_categoria:
             categorias_result.append(MenuCategoriaType(
-                categoria_id=None,
-                nombre="Otros",
-                orden=999,
-                platos=sin_categoria,
+                categoria_id=None, nombre="Otros", orden=999, platos=sin_categoria,
             ))
 
         return MenuRestauranteType(
@@ -133,18 +136,22 @@ class MenuQuery(graphene.ObjectType):
     def resolve_categoria(self, info, id):
         return menu_client.get_categoria(id)
 
-    def resolve_platos(self, info, activo=None, categoria_id=None):
-        return menu_client.get_platos(activo=activo, categoria_id=categoria_id) or []
+    def resolve_platos(self, info, activo=None, categoria_id=None,
+                       restaurante_id=None, disponibles=None):
+        return menu_client.get_platos(
+            activo=activo, categoria_id=categoria_id,
+            restaurante_id=restaurante_id, disponibles=disponibles,
+        ) or []
 
     def resolve_plato(self, info, id):
         return menu_client.get_plato(id)
 
-    def resolve_ingredientes(self, info, activo=None):
-        return menu_client.get_ingredientes(activo=activo) or []
+    def resolve_ingredientes(self, info, activo=None, restaurante_id=None, disponibles=None):
+        return menu_client.get_ingredientes(
+            activo=activo, restaurante_id=restaurante_id, disponibles=disponibles,
+        ) or []
 
     def resolve_precios(self, info, plato_id=None, restaurante_id=None, activo=None):
         return menu_client.get_precios(
-            plato_id=plato_id,
-            restaurante_id=restaurante_id,
-            activo=activo,
+            plato_id=plato_id, restaurante_id=restaurante_id, activo=activo,
         ) or []
