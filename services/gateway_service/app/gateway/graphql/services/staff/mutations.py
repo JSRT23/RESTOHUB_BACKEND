@@ -13,6 +13,17 @@ from .types import (
 # ─────────────────────────────────────────
 
 class CrearEmpleado(graphene.Mutation):
+    """
+    Crea un empleado en staff_service.
+
+    IMPORTANTE: el campo `restaurante` debe ser el UUID del restaurante
+    en menu_service (restaurante_id externo). El staff_service resuelve
+    internamente el RestauranteLocal correspondiente usando ese UUID.
+
+    El gateway pasa el restaurante_id del menu_service directamente —
+    el serializer de staff_service fue actualizado para aceptar
+    restaurante_id (UUID externo) en lugar de la PK interna.
+    """
     class Arguments:
         nombre = graphene.String(required=True)
         apellido = graphene.String(required=True)
@@ -21,7 +32,7 @@ class CrearEmpleado(graphene.Mutation):
         telefono = graphene.String()
         rol = graphene.String(required=True)
         pais = graphene.String(required=True)
-        restaurante = graphene.ID(required=True)
+        restaurante = graphene.ID(required=True)   # UUID del menu_service
         fecha_contratacion = graphene.String()
 
     empleado = graphene.Field(EmpleadoType)
@@ -29,12 +40,12 @@ class CrearEmpleado(graphene.Mutation):
     errores = graphene.String()
 
     def mutate(self, info, **kwargs):
-        print("DATA ENVIADA:", kwargs)
         data = staff_client.crear_empleado(kwargs)
-        print("RESPUESTA:", data)
-
         if not data:
             return CrearEmpleado(ok=False, errores="Error al crear el empleado.")
+        if isinstance(data, dict) and data.get("_error"):
+            errores = _extraer_errores(data)
+            return CrearEmpleado(ok=False, errores=errores)
         return CrearEmpleado(ok=True, empleado=data)
 
 
@@ -60,12 +71,7 @@ class EditarEmpleado(graphene.Mutation):
 
 
 class ActivarEmpleado(graphene.Mutation):
-    """
-    Reactiva un empleado desactivado.
-    Solo admin_central puede activar empleados.
-    Usa editar_empleado con activo=True ya que staff_service
-    no tiene endpoint dedicado de activación.
-    """
+    """Solo admin_central puede activar empleados."""
     class Arguments:
         empleado_id = graphene.ID(required=True)
 
@@ -317,35 +323,50 @@ class CrearPrediccion(graphene.Mutation):
 
 
 # ─────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────
+
+def _extraer_errores(data: dict) -> str:
+    """Extrae mensaje de error del response del staff_service."""
+    if not data:
+        return "Error desconocido."
+    errores_campo = {
+        k: v for k, v in data.items()
+        if k not in ("_error", "status", "detail")
+        and isinstance(v, (list, str))
+    }
+    if errores_campo:
+        partes = []
+        for campo, msg in errores_campo.items():
+            texto = msg[0] if isinstance(msg, list) else msg
+            partes.append(f"{campo}: {texto}")
+        return " | ".join(partes)
+    return data.get("detail", "Error en staff_service.")
+
+
+# ─────────────────────────────────────────
 # REGISTRO
 # ─────────────────────────────────────────
 
 class StaffMutation(graphene.ObjectType):
-    # Empleados
     crear_empleado = CrearEmpleado.Field()
     editar_empleado = EditarEmpleado.Field()
-    activar_empleado = ActivarEmpleado.Field()   # ← NUEVO
+    activar_empleado = ActivarEmpleado.Field()
     desactivar_empleado = DesactivarEmpleado.Field()
 
-    # Turnos
     crear_turno = CrearTurno.Field()
     iniciar_turno = IniciarTurno.Field()
     cancelar_turno = CancelarTurno.Field()
 
-    # Asistencia
     registrar_entrada = RegistrarEntrada.Field()
     registrar_salida = RegistrarSalida.Field()
 
-    # Cocina
     crear_estacion = CrearEstacion.Field()
     completar_asignacion_cocina = CompletarAsignacionCocina.Field()
 
-    # Alertas
     resolver_alerta = ResolverAlerta.Field()
 
-    # Nómina
     generar_nomina = GenerarNomina.Field()
     cerrar_nomina = CerrarNomina.Field()
 
-    # Predicción
     crear_prediccion = CrearPrediccion.Field()

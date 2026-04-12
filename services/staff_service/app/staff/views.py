@@ -104,6 +104,7 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
         pais = self.request.query_params.get("pais")
 
         if restaurante_id:
+            # restaurante_id es el UUID externo del menu_service
             qs = qs.filter(restaurante__restaurante_id=restaurante_id)
         if rol:
             qs = qs.filter(rol=rol)
@@ -116,9 +117,10 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         if self.action == "list":
-            return EmpleadoListSerializer
+            return EmpleadoListSerializer          # email + telefono incluidos
         if self.action in ["create", "partial_update"]:
-            return EmpleadoWriteSerializer
+            return EmpleadoWriteSerializer         # acepta restaurante UUID externo
+        # detalle completo (retrieve, desactivar)
         return EmpleadoSerializer
 
     @action(detail=True, methods=["post"])
@@ -127,6 +129,7 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
         POST /empleados/{id}/desactivar/
         Marca el empleado como inactivo.
         Usa update_fields para que el signal publique el evento correcto.
+        Retorna el serializer completo para que el gateway lea email/telefono.
         """
         empleado = self.get_object()
 
@@ -137,8 +140,9 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
             )
 
         empleado.activo = False
-        empleado.save(update_fields=["activo"])
+        empleado.save(update_fields=["activo", "updated_at"])
 
+        # EmpleadoSerializer (detalle completo) — incluye email, telefono, etc.
         return Response(EmpleadoSerializer(empleado).data)
 
 

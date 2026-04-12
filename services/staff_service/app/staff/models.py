@@ -15,6 +15,7 @@ class Pais(models.TextChoices):
     BRASIL = "BR", "Brasil"
     PERU = "PE", "Perú"
     PANAMA = "PA", "Panamá"
+    ESTADOS_UNIDOS = "US", "Estados Unidos"
 
 
 class Moneda(models.TextChoices):

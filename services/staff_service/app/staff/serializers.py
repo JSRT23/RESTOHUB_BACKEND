@@ -1,6 +1,6 @@
 from django.utils import timezone
 from rest_framework import serializers
-
+from datetime import date
 from app.staff.models import (
     AlertaOperacional,
     AsignacionCocina,
@@ -58,74 +58,138 @@ class ConfiguracionLaboralPaisSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class EmpleadoListSerializer(serializers.ModelSerializer):
-    """Versión ligera para listados — sin datos de auditoría."""
+    """
+    Versión ligera para listados GET /empleados/.
+    Incluye email y telefono para que el admin central
+    pueda contactar al gerente directamente desde la UI.
+    """
     rol_display = serializers.CharField(
-        source="get_rol_display", read_only=True)
+        source="get_rol_display",  read_only=True)
     pais_display = serializers.CharField(
         source="get_pais_display", read_only=True)
     restaurante_nombre = serializers.CharField(
-        source="restaurante.nombre", read_only=True
-    )
+        source="restaurante.nombre", read_only=True)
 
     class Meta:
         model = Empleado
         fields = [
-            "id", "nombre", "apellido", "documento",
-            "rol", "rol_display", "pais", "pais_display",
-            "restaurante", "restaurante_nombre", "activo",
+            "id",
+            "nombre",
+            "apellido",
+            "documento",
+            "email",          # ← AGREGADO
+            "telefono",       # ← AGREGADO
+            "rol",
+            "rol_display",
+            "pais",
+            "pais_display",
+            "restaurante",
+            "restaurante_nombre",
+            "activo",
         ]
 
 
+# ── 2. EmpleadoSerializer (detalle) ─────────────────────────────────────────
+# Sin cambios respecto al original — se incluye por completitud
+
 class EmpleadoSerializer(serializers.ModelSerializer):
-    """Detalle completo — incluye auditoría y config laboral del país."""
+    """Detalle completo — incluye auditoría."""
     rol_display = serializers.CharField(
-        source="get_rol_display", read_only=True)
+        source="get_rol_display",  read_only=True)
     pais_display = serializers.CharField(
         source="get_pais_display", read_only=True)
     restaurante_nombre = serializers.CharField(
-        source="restaurante.nombre", read_only=True
-    )
+        source="restaurante.nombre", read_only=True)
 
     class Meta:
         model = Empleado
         fields = [
-            "id", "nombre", "apellido", "documento",
-            "email", "telefono",
-            "rol", "rol_display",
-            "pais", "pais_display",
-            "restaurante", "restaurante_nombre",
-            "fecha_contratacion", "activo",
-            "created_at", "updated_at",
+            "id",
+            "nombre",
+            "apellido",
+            "documento",
+            "email",
+            "telefono",
+            "rol",
+            "rol_display",
+            "pais",
+            "pais_display",
+            "restaurante",
+            "restaurante_nombre",
+            "fecha_contratacion",
+            "activo",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+# ── 3. EmpleadoWriteSerializer ───────────────────────────────────────────────
+# CAMBIO CRÍTICO: `restaurante` ahora acepta el UUID externo del menu_service
+# (RestauranteLocal.restaurante_id), no la PK interna del modelo.
+# El validate_restaurante resuelve la instancia correcta.
+
 class EmpleadoWriteSerializer(serializers.ModelSerializer):
-    """Para POST y PATCH — valida documento único y restaurante existente."""
+    """
+    Para POST y PATCH.
+
+    El campo `restaurante` recibe el UUID del restaurante en menu_service
+    (es decir, RestauranteLocal.restaurante_id) y lo resuelve
+    internamente a la instancia de RestauranteLocal.
+
+    `fecha_contratacion` es opcional — si no viene se asigna la fecha de hoy.
+    `telefono` es opcional.
+    """
+
+    # Sobreescribir el campo para que acepte UUID externo (no PK interna)
+    restaurante = serializers.UUIDField(write_only=True)
+    fecha_contratacion = serializers.DateField(required=False, allow_null=True)
 
     class Meta:
         model = Empleado
         fields = [
-            "nombre", "apellido", "documento",
-            "email", "telefono",
-            "rol", "pais", "restaurante",
+            "nombre",
+            "apellido",
+            "documento",
+            "email",
+            "telefono",
+            "rol",
+            "pais",
+            "restaurante",
             "fecha_contratacion",
         ]
 
     def validate_restaurante(self, value):
-        if not value.activo:
+        """
+        Recibe el UUID externo del menu_service y retorna la instancia
+        de RestauranteLocal correspondiente.
+        """
+        try:
+            restaurante_local = RestauranteLocal.objects.get(
+                restaurante_id=value)
+        except RestauranteLocal.DoesNotExist:
+            raise serializers.ValidationError(
+                f"No existe un restaurante registrado con id={value}. "
+                "Verifica que el evento de creación fue procesado por RabbitMQ."
+            )
+        if not restaurante_local.activo:
             raise serializers.ValidationError(
                 "No se puede asignar un empleado a un restaurante inactivo."
             )
-        return value
+        return restaurante_local   # retorna la instancia → DRF la usa en create/update
+
+    def validate_fecha_contratacion(self, value):
+        """Si no viene fecha, retornar hoy."""
+        return value if value else date.today()
 
     def validate(self, attrs):
-        # Consistencia país — el empleado debe ser del mismo país que el restaurante
+        """Validar consistencia de país entre empleado y restaurante."""
         restaurante = attrs.get("restaurante") or (
             self.instance.restaurante if self.instance else None
         )
         pais = attrs.get("pais") or (
-            self.instance.pais if self.instance else None)
+            self.instance.pais if self.instance else None
+        )
 
         if restaurante and pais and restaurante.pais != pais:
             raise serializers.ValidationError(
@@ -134,10 +198,21 @@ class EmpleadoWriteSerializer(serializers.ModelSerializer):
             )
         return attrs
 
+    def create(self, validated_data):
+        # `restaurante` ya es la instancia de RestauranteLocal
+        if "fecha_contratacion" not in validated_data or not validated_data.get("fecha_contratacion"):
+            validated_data["fecha_contratacion"] = date.today()
+        return Empleado.objects.create(**validated_data)
 
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
 # ---------------------------------------------------------------------------
 # Turno
 # ---------------------------------------------------------------------------
+
 
 class TurnoListSerializer(serializers.ModelSerializer):
     """Listado — sin exponer qr_token."""
