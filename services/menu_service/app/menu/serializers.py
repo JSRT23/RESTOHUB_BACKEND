@@ -44,7 +44,10 @@ class IngredienteWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Ingrediente
-        fields = ("restaurante", "nombre", "unidad_medida", "descripcion")
+        # FIX: Agregado "id"
+        fields = ("id", "restaurante", "nombre",
+                  "unidad_medida", "descripcion")
+        read_only_fields = ("id",)
 
     def validate_nombre(self, value):
         if not value.strip():
@@ -69,7 +72,9 @@ class PlatoIngredienteSerializer(serializers.ModelSerializer):
 class PlatoIngredienteWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlatoIngrediente
-        fields = ("ingrediente", "cantidad")
+        # FIX: Agregado "id"
+        fields = ("id", "ingrediente", "cantidad")
+        read_only_fields = ("id",)
 
     def validate_cantidad(self, value):
         if value <= 0:
@@ -105,8 +110,10 @@ class PrecioPlatoSerializer(serializers.ModelSerializer):
 class PrecioPlatoWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrecioPlato
-        fields = ("plato", "restaurante", "precio",
+        # FIX: Agregado "id"
+        fields = ("id", "plato", "restaurante", "precio",
                   "fecha_inicio", "fecha_fin", "activo")
+        read_only_fields = ("id",)
 
     def validate(self, attrs):
         return _validar_precio(attrs, instance=self.instance)
@@ -180,8 +187,10 @@ class PlatoWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Plato
-        fields = ("restaurante", "nombre", "descripcion",
+        # FIX: Agregado "id"
+        fields = ("id", "restaurante", "nombre", "descripcion",
                   "categoria", "imagen", "activo")
+        read_only_fields = ("id",)
 
     def validate_nombre(self, value):
         if not value.strip():
