@@ -5,6 +5,7 @@ from .types import (
     LoteType, OrdenCompraType, AlertaStockType, RecetaPlatoType,
 )
 from ....client import inventory_client
+from ....middleware.permissions import get_jwt_user
 
 
 # ─────────────────────────────────────────
@@ -16,10 +17,17 @@ from ....client import inventory_client
 class InventoryQuery(graphene.ObjectType):
 
     # Proveedores
+    # - admin_central: ve todos (puede filtrar por pais/ciudad/alcance)
+    # - gerente_local: ve GLOBAL + PAIS(su país) + CIUDAD(su ciudad) + LOCAL(su restaurante)
+    # - supervisor y roles operativos: sin acceso
     proveedores = graphene.List(
         ProveedorType,
         activo=graphene.Boolean(),
         pais=graphene.String(),
+        ciudad=graphene.String(),
+        alcance=graphene.String(
+            description="Filtrar por alcance: GLOBAL | PAIS | CIUDAD | LOCAL. Solo admin_central."
+        ),
     )
     proveedor = graphene.Field(ProveedorType, id=graphene.ID(required=True))
 
@@ -85,13 +93,74 @@ class InventoryQuery(graphene.ObjectType):
 
     # ── Resolvers ─────────────────────────────────────────────────────────
 
-    def resolve_proveedores(self, info, activo=None, pais=None):
-        return inventory_client.get_proveedores(activo=activo, pais=pais) or []
+    def resolve_proveedores(self, info, activo=None, pais=None, ciudad=None, alcance=None):
+        """
+        Control de visibilidad por rol (Opción B):
+
+        admin_central  → ve todos; puede filtrar por pais/ciudad/alcance libremente.
+        gerente_local  → ve solo los que aplican a su restaurante:
+                         alcance=GLOBAL
+                         OR (alcance=PAIS  AND pais_destino  == jwt.pais)
+                         OR (alcance=CIUDAD AND ciudad_destino == jwt.ciudad)
+                         OR (alcance=LOCAL AND creado_por_restaurante_id == jwt.restaurante_id)
+                         El frontend no necesita pasar filtros — el gateway los inyecta.
+        supervisor     → sin acceso (lista vacía).
+        otros roles    → sin acceso (lista vacía).
+        """
+        user = get_jwt_user(info)
+        if not user:
+            return []
+
+        rol = user.get("rol")
+
+        if rol == "admin_central":
+            # Admin ve todo; respeta filtros manuales si los pasa
+            params = {}
+            if activo is not None:
+                params["activo"] = activo
+            if pais:
+                params["pais"] = pais
+            if ciudad:
+                params["ciudad"] = ciudad
+            if alcance:
+                params["alcance"] = alcance
+            return inventory_client.get_proveedores(**params) or []
+
+        if rol == "gerente_local":
+            # El gerente no pasa filtros de scope — el gateway los inyecta
+            restaurante_id = user.get("restaurante_id")
+            jwt_pais = user.get("pais")
+            jwt_ciudad = user.get("ciudad")
+            return inventory_client.get_proveedores_para_gerente(
+                restaurante_id=restaurante_id,
+                pais=jwt_pais,
+                ciudad=jwt_ciudad,
+                activo=activo,
+            ) or []
+
+        # supervisor, cocinero, mesero, cajero, repartidor → sin acceso
+        return []
 
     def resolve_proveedor(self, info, id):
+        user = get_jwt_user(info)
+        if not user:
+            return None
+        rol = user.get("rol")
+        # Solo admin y gerente pueden ver detalle de un proveedor
+        if rol not in ("admin_central", "gerente_local"):
+            return None
         return inventory_client.get_proveedor(id)
 
     def resolve_almacenes(self, info, restaurante_id=None, activo=None):
+        user = get_jwt_user(info)
+        if not user:
+            return []
+        rol = user.get("rol")
+        # gerente y supervisor ven solo su restaurante
+        if rol in ("gerente_local", "supervisor"):
+            restaurante_id = user.get("restaurante_id")
+        elif rol not in ("admin_central",):
+            return []
         return inventory_client.get_almacenes(
             restaurante_id=restaurante_id, activo=activo
         ) or []
@@ -125,6 +194,15 @@ class InventoryQuery(graphene.ObjectType):
         return inventory_client.get_lote(id)
 
     def resolve_ordenes_compra(self, info, estado=None, proveedor_id=None, restaurante_id=None):
+        user = get_jwt_user(info)
+        if not user:
+            return []
+        rol = user.get("rol")
+        # gerente solo ve órdenes de su restaurante
+        if rol == "gerente_local":
+            restaurante_id = user.get("restaurante_id")
+        elif rol not in ("admin_central",):
+            return []
         return inventory_client.get_ordenes_compra(
             estado=estado,
             proveedor_id=proveedor_id,
@@ -135,6 +213,15 @@ class InventoryQuery(graphene.ObjectType):
         return inventory_client.get_orden_compra(id)
 
     def resolve_alertas_stock(self, info, tipo=None, estado=None, restaurante_id=None):
+        user = get_jwt_user(info)
+        if not user:
+            return []
+        rol = user.get("rol")
+        # gerente y supervisor solo ven alertas de su restaurante
+        if rol in ("gerente_local", "supervisor"):
+            restaurante_id = user.get("restaurante_id")
+        elif rol not in ("admin_central",):
+            return []
         return inventory_client.get_alertas(
             tipo=tipo,
             estado=estado,

@@ -141,11 +141,6 @@ class DesactivarCategoria(graphene.Mutation):
 # ── Ingrediente ────────────────────────────────────────────────────────────
 
 class CrearIngrediente(graphene.Mutation):
-    """
-    Crea un ingrediente.
-    - Si restaurante_id es null → ingrediente global (solo admin_central debería hacerlo)
-    - Si restaurante_id tiene valor → ingrediente del restaurante (gerente)
-    """
     class Arguments:
         nombre = graphene.String(required=True)
         unidad_medida = graphene.String(required=True)
@@ -158,8 +153,9 @@ class CrearIngrediente(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, nombre, unidad_medida, descripcion=None, restaurante_id=None):
-        payload = {"nombre": nombre, "unidad_medida": unidad_medida,
-                   "descripcion": descripcion}
+        payload = {"nombre": nombre, "unidad_medida": unidad_medida}
+        if descripcion is not None:
+            payload["descripcion"] = descripcion
         if restaurante_id:
             payload["restaurante"] = restaurante_id
         data = menu_client.crear_ingrediente(payload)
@@ -169,7 +165,6 @@ class CrearIngrediente(graphene.Mutation):
 
 
 class ActualizarIngrediente(graphene.Mutation):
-    """Actualiza nombre y descripción (la unidad de medida no cambia)."""
     class Arguments:
         id = graphene.ID(required=True)
         nombre = graphene.String()
@@ -229,12 +224,19 @@ class CrearPlato(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, nombre, descripcion, categoria_id=None, imagen=None, restaurante_id=None):
+        # FIX: solo incluir campos opcionales si tienen valor — DRF rechaza null
+        # en FKs que no son nullable en el WriteSerializer.
         payload = {
-            "nombre": nombre, "descripcion": descripcion,
-            "categoria": categoria_id, "imagen": imagen,
+            "nombre": nombre,
+            "descripcion": descripcion,
         }
+        if categoria_id:
+            payload["categoria"] = categoria_id
+        if imagen:
+            payload["imagen"] = imagen
         if restaurante_id:
             payload["restaurante"] = restaurante_id
+
         data = menu_client.crear_plato(payload)
         if not data:
             return CrearPlato(ok=False, error="Error al crear plato.")
@@ -330,10 +332,24 @@ class CrearPrecioPlato(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, plato_id, restaurante_id, precio, fecha_inicio, fecha_fin=None):
-        data = menu_client.crear_precio({
-            "plato": plato_id, "restaurante": restaurante_id,
-            "precio": str(precio), "fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin,
-        })
+        # FIX: garantizar que fecha_inicio llegue con hora para evitar rechazo
+        # por zona horaria. Si viene solo como "YYYY-MM-DD", añadir T12:00:00
+        # (mediodía UTC) para que sea válido en cualquier offset.
+        if fecha_inicio and "T" not in fecha_inicio:
+            fecha_inicio = f"{fecha_inicio}T12:00:00"
+
+        payload = {
+            "plato": plato_id,
+            "restaurante": restaurante_id,
+            "precio": str(precio),
+            "fecha_inicio": fecha_inicio,
+        }
+        if fecha_fin:
+            if "T" not in fecha_fin:
+                fecha_fin = f"{fecha_fin}T12:00:00"
+            payload["fecha_fin"] = fecha_fin
+
+        data = menu_client.crear_precio(payload)
         if not data:
             return CrearPrecioPlato(ok=False, error="Error al crear precio.")
         return CrearPrecioPlato(ok=True, precio_plato=data)
@@ -372,7 +388,7 @@ class MenuMutation(graphene.ObjectType):
     activar_categoria = ActivarCategoria.Field()
     desactivar_categoria = DesactivarCategoria.Field()
 
-    # Ingrediente — ahora completo
+    # Ingrediente
     crear_ingrediente = CrearIngrediente.Field()
     actualizar_ingrediente = ActualizarIngrediente.Field()
     activar_ingrediente = ActivarIngrediente.Field()

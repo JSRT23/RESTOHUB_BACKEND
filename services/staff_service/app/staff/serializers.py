@@ -60,11 +60,10 @@ class ConfiguracionLaboralPaisSerializer(serializers.ModelSerializer):
 class EmpleadoListSerializer(serializers.ModelSerializer):
     """
     Versión ligera para listados GET /empleados/.
-    Incluye email y telefono para que el admin central
-    pueda contactar al gerente directamente desde la UI.
+    FIX: se agregó fecha_contratacion (faltaba en fields).
     """
     rol_display = serializers.CharField(
-        source="get_rol_display",  read_only=True)
+        source="get_rol_display", read_only=True)
     pais_display = serializers.CharField(
         source="get_pais_display", read_only=True)
     restaurante_nombre = serializers.CharField(
@@ -77,14 +76,15 @@ class EmpleadoListSerializer(serializers.ModelSerializer):
             "nombre",
             "apellido",
             "documento",
-            "email",          # ← AGREGADO
-            "telefono",       # ← AGREGADO
+            "email",
+            "telefono",
             "rol",
             "rol_display",
             "pais",
             "pais_display",
             "restaurante",
             "restaurante_nombre",
+            "fecha_contratacion",
             "activo",
         ]
 

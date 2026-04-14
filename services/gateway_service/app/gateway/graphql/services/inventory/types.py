@@ -10,6 +10,15 @@ class ProveedorType(graphene.ObjectType):
     telefono = graphene.String()
     email = graphene.String()
     moneda_preferida = graphene.String()
+    # Opción B — alcance del proveedor
+    # GLOBAL    → visible para todos los restaurantes de la cadena
+    # PAIS      → visible para restaurantes del país indicado
+    # CIUDAD    → visible para restaurantes de esa ciudad
+    # LOCAL     → solo el restaurante que lo creó
+    alcance = graphene.String()
+    pais_destino = graphene.String()
+    ciudad_destino = graphene.String()
+    creado_por_restaurante_id = graphene.ID()
     activo = graphene.Boolean()
     fecha_creacion = graphene.String()
     fecha_actualizacion = graphene.String()

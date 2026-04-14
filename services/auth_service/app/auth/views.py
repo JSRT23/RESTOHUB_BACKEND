@@ -1,3 +1,4 @@
+# auth_service/app/auth/views.py
 import jwt
 from rest_framework import status
 from rest_framework.response import Response
@@ -159,9 +160,8 @@ class AutoRegistroView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        usuario = serializer.save()  # email_verificado=False por defecto
+        usuario = serializer.save()
 
-        # Eliminar códigos anteriores y generar uno nuevo
         EmailVerificationCode.objects.filter(usuario=usuario).delete()
         codigo_obj = EmailVerificationCode.objects.create(usuario=usuario)
 
@@ -170,9 +170,8 @@ class AutoRegistroView(APIView):
         return Response(
             {
                 "detail": "Cuenta creada. Revisa tu correo e ingresa el código de 6 dígitos.",
-                "email":        usuario.email,
+                "email":         usuario.email,
                 "email_enviado": enviado,
-                # En desarrollo: mostrar código en la respuesta para no depender del email
                 **({"codigo_dev": codigo_obj.codigo} if not enviado else {}),
             },
             status=status.HTTP_201_CREATED,
@@ -183,12 +182,6 @@ class VerificarCodigoView(APIView):
     """
     POST /api/auth/verificar-codigo/
     Body: { email, codigo }
-
-    Flujo:
-    1. Busca el código activo para ese email
-    2. Valida expiración y límite de intentos
-    3. Si es correcto → activa la cuenta y envía bienvenida
-    4. Si es incorrecto → suma intento fallido
     """
 
     def post(self, request):
@@ -258,7 +251,6 @@ class VerificarCodigoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ✅ Código correcto
         usuario.email_verificado = True
         usuario.save(update_fields=["email_verificado"])
         codigo_obj.delete()
@@ -275,8 +267,6 @@ class ReenviarCodigoView(APIView):
     """
     POST /api/auth/reenviar-codigo/
     Body: { email }
-    Genera un código nuevo y lo envía — elimina el anterior.
-    Respuesta genérica para no revelar si el email existe.
     """
 
     def post(self, request):
@@ -292,7 +282,6 @@ class ReenviarCodigoView(APIView):
         if not usuario or usuario.email_verificado:
             return respuesta_generica
 
-        # Eliminar código anterior y crear uno nuevo
         EmailVerificationCode.objects.filter(usuario=usuario).delete()
         codigo_obj = EmailVerificationCode.objects.create(usuario=usuario)
         enviar_codigo_verificacion(usuario, codigo_obj.codigo)
@@ -301,15 +290,14 @@ class ReenviarCodigoView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Registro interno (admin → operativos)
+# Registro interno (admin/gerente → operativos)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RegistroView(APIView):
     """
     POST /api/auth/registro/
     Solo admin_central y gerente_local pueden usar este endpoint.
-    Los usuarios creados aquí tienen email_verificado=True por defecto
-    (el gerente/admin los conoce personalmente).
+    Los usuarios creados aquí tienen email_verificado=True por defecto.
     """
     @requiere_auth
     def post(self, request):
@@ -336,10 +324,8 @@ class RegistroView(APIView):
                     {"detail": f"Gerente no puede crear usuarios con rol '{rol_nuevo}'."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            # Forzar restaurante del gerente
             serializer.validated_data["restaurante_id"] = creador.restaurante_id
 
-        # Creados internamente → verificados por defecto
         serializer.validated_data["email_verificado"] = True
         usuario = serializer.save()
 
@@ -411,6 +397,123 @@ class UsuarioDetailView(APIView):
         u.activo = False
         u.save()
         return Response({"detail": "Usuario desactivado."})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Desactivar / Activar usuario por email
+# Llamados desde el gateway cuando el gerente desactiva o reactiva un empleado.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DesactivarUsuarioView(APIView):
+    """
+    POST /api/auth/usuarios/desactivar/
+    Body: { "email": "empleado@ejemplo.com" }
+
+    Desactiva la cuenta — el usuario no podrá iniciar sesión.
+    Revoca todos sus refresh tokens activos para invalidar sesiones abiertas.
+    Solo accesible para admin_central y gerente_local.
+    """
+    @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        if not email:
+            return Response(
+                {"detail": "El campo 'email' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            usuario = Usuario.objects.get(email=email)
+        except Usuario.DoesNotExist:
+            return Response(
+                {"detail": f"No existe un usuario con email '{email}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Protección: el gerente solo puede desactivar usuarios de su restaurante
+        if (request.usuario.rol == Rol.GERENTE_LOCAL
+                and usuario.restaurante_id != request.usuario.restaurante_id):
+            return Response(
+                {"detail": "No puedes desactivar usuarios de otro restaurante."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Protección: nadie puede desactivarse a sí mismo desde aquí
+        if usuario.id == request.usuario.id:
+            return Response(
+                {"detail": "No puedes desactivar tu propia cuenta."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Protección: gerente no puede desactivar a otro gerente o admin
+        if (request.usuario.rol == Rol.GERENTE_LOCAL
+                and usuario.rol in (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)):
+            return Response(
+                {"detail": "No tienes permiso para desactivar a un gerente o admin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not usuario.activo:
+            return Response({"ok": True, "detail": "El usuario ya estaba inactivo."})
+
+        usuario.activo = False
+        usuario.save(update_fields=["activo"])
+
+        # Revocar todas las sesiones activas del usuario
+        RefreshToken.objects.filter(
+            usuario=usuario, revocado=False).update(revocado=True)
+
+        return Response({"ok": True})
+
+
+class ActivarUsuarioView(APIView):
+    """
+    POST /api/auth/usuarios/activar/
+    Body: { "email": "empleado@ejemplo.com" }
+
+    Reactiva la cuenta — el usuario puede iniciar sesión nuevamente.
+    Solo accesible para admin_central y gerente_local.
+    """
+    @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        if not email:
+            return Response(
+                {"detail": "El campo 'email' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            usuario = Usuario.objects.get(email=email)
+        except Usuario.DoesNotExist:
+            return Response(
+                {"detail": f"No existe un usuario con email '{email}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Protección: el gerente solo puede activar usuarios de su restaurante
+        if (request.usuario.rol == Rol.GERENTE_LOCAL
+                and usuario.restaurante_id != request.usuario.restaurante_id):
+            return Response(
+                {"detail": "No puedes activar usuarios de otro restaurante."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Protección: gerente no puede reactivar a otro gerente o admin
+        if (request.usuario.rol == Rol.GERENTE_LOCAL
+                and usuario.rol in (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)):
+            return Response(
+                {"detail": "No tienes permiso para activar a un gerente o admin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if usuario.activo:
+            return Response({"ok": True, "detail": "El usuario ya estaba activo."})
+
+        usuario.activo = True
+        usuario.save(update_fields=["activo"])
+
+        return Response({"ok": True})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

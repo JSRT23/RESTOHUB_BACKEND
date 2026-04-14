@@ -51,20 +51,27 @@ class RegistroSerializer(serializers.ModelSerializer):
 
         rol = data.get("rol")
         restaurante_id = data.get("restaurante_id")
-        empleado_id = data.get("empleado_id")
 
+        # restaurante_id sí es requerido desde el momento del registro
+        # porque el gerente lo conoce y lo pasa en el payload.
         if rol in ROLES_CON_RESTAURANTE and not restaurante_id:
             raise serializers.ValidationError(
                 {"restaurante_id": f"El rol '{rol}' requiere restaurante_id."}
             )
-        if rol in ROLES_CON_EMPLEADO and not empleado_id:
-            raise serializers.ValidationError(
-                {"empleado_id": f"El rol '{rol}' requiere empleado_id."}
-            )
+
+        # empleado_id NO se valida en el registro.
+        # Al registrar, el empleado todavía no existe en staff_service.
+        # El flujo correcto es:
+        #   1. registrarUsuario en auth (sin empleado_id)
+        #   2. crearEmpleado en staff  (genera el empleado_id)
+        # El JWT vincula ambos por email en el primer login.
+        # Si el empleado_id llega (ej: flujo admin que ya lo tiene), se acepta.
+
         if rol == Rol.ADMIN_CENTRAL and restaurante_id:
             raise serializers.ValidationError(
                 {"restaurante_id": "admin_central no debe tener restaurante_id."}
             )
+
         return data
 
     def create(self, validated_data):

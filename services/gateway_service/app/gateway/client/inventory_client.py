@@ -76,12 +76,42 @@ def _patch(path: str, data: dict) -> dict | None:
 # Proveedor
 # ─────────────────────────────────────────
 
-def get_proveedores(activo=None, pais=None):
+def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
+    """
+    Listado de proveedores con filtros opcionales.
+    Usado directamente por admin_central.
+    """
     params = {}
     if activo is not None:
         params["activo"] = activo
     if pais:
         params["pais"] = pais
+    if ciudad:
+        params["ciudad"] = ciudad
+    if alcance:
+        params["alcance"] = alcance
+    return _get("/proveedores/", params=params) or []
+
+
+def get_proveedores_para_gerente(restaurante_id: str, pais: str = None,
+                                 ciudad: str = None, activo=None):
+    """
+    Filtro de visibilidad Opción B para gerente_local.
+    El inventory_service recibe estos params y aplica:
+      alcance=GLOBAL
+      OR (alcance=PAIS AND pais_destino=pais)
+      OR (alcance=CIUDAD AND ciudad_destino=ciudad)
+      OR (alcance=LOCAL AND creado_por_restaurante_id=restaurante_id)
+    """
+    params = {"scope": "gerente"}
+    if restaurante_id:
+        params["restaurante_id"] = restaurante_id
+    if pais:
+        params["pais_destino"] = pais
+    if ciudad:
+        params["ciudad_destino"] = ciudad
+    if activo is not None:
+        params["activo"] = activo
     return _get("/proveedores/", params=params) or []
 
 

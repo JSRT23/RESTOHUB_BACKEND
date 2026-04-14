@@ -30,11 +30,9 @@ class Login(graphene.Mutation):
             return Login(ok=False, error="Error de conexión con el servicio de autenticación.", codigo="ERROR")
 
         if result.get("_error"):
-            # Extraer mensaje y código del error
             detail = result.get("detail", "Error al iniciar sesión.")
             codigo = result.get("codigo", "ERROR")
 
-            # Caso especial: email no verificado — dar instrucción clara al frontend
             if codigo == "EMAIL_NO_VERIFICADO":
                 detail = "Debes verificar tu correo antes de iniciar sesión."
 
@@ -71,7 +69,6 @@ class AutoRegistro(graphene.Mutation):
     """
     Registro público para crear el primer admin_central.
     Envía código de verificación al email.
-    El email es validado con MX lookup antes de guardar.
     """
     class Arguments:
         email = graphene.String(required=True)
@@ -115,6 +112,12 @@ class RegistrarUsuario(graphene.Mutation):
     """
     Crea un usuario operativo. Requiere token de admin_central o gerente_local.
     El email es validado con MX lookup. El usuario creado tiene email_verificado=True.
+
+    NOTA: No se requiere empleado_id al momento del registro.
+    El flujo correcto es:
+      1. registrarUsuario en auth_service (sin empleado_id)
+      2. crearEmpleado en staff_service
+    Al hacer login, el JWT se construye vinculando ambos por email.
     """
     class Arguments:
         email = graphene.String(required=True)
@@ -139,7 +142,6 @@ class RegistrarUsuario(graphene.Mutation):
         if jwt_user.get("rol") not in ("admin_central", "gerente_local"):
             return RegistrarUsuario(ok=False, error="No tienes permiso para crear usuarios.")
 
-        # Reenviar token al auth_service
         auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
         token = auth_header.split(
             " ", 1)[1] if auth_header.startswith("Bearer ") else ""
@@ -168,6 +170,88 @@ class RegistrarUsuario(graphene.Mutation):
 
 
 # ─────────────────────────────────────────
+# DESACTIVAR USUARIO
+# ─────────────────────────────────────────
+
+class DesactivarUsuario(graphene.Mutation):
+    """
+    Desactiva la cuenta de un usuario en auth_service por email.
+    Revoca el acceso al login de forma inmediata.
+    Se llama en paralelo con desactivarEmpleado en staff_service.
+    Solo permitido para admin_central y gerente_local.
+    """
+    class Arguments:
+        email = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, email):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user:
+            return DesactivarUsuario(ok=False, error="Debes iniciar sesión.")
+
+        if jwt_user.get("rol") not in ("admin_central", "gerente_local"):
+            return DesactivarUsuario(ok=False, error="No tienes permiso para desactivar usuarios.")
+
+        auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
+        token = auth_header.split(
+            " ", 1)[1] if auth_header.startswith("Bearer ") else ""
+
+        result = auth_client.desactivar_usuario(email, token)
+
+        if not result or result.get("_error"):
+            return DesactivarUsuario(
+                ok=False,
+                error=result.get(
+                    "detail", "Error al desactivar el usuario.") if result else "Error de conexión.",
+            )
+
+        return DesactivarUsuario(ok=True)
+
+
+# ─────────────────────────────────────────
+# ACTIVAR USUARIO
+# ─────────────────────────────────────────
+
+class ActivarUsuario(graphene.Mutation):
+    """
+    Reactiva la cuenta de un usuario en auth_service por email.
+    Restaura el acceso al login.
+    Se llama en paralelo con activarEmpleado en staff_service.
+    Solo permitido para admin_central y gerente_local.
+    """
+    class Arguments:
+        email = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, email):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user:
+            return ActivarUsuario(ok=False, error="Debes iniciar sesión.")
+
+        if jwt_user.get("rol") not in ("admin_central", "gerente_local"):
+            return ActivarUsuario(ok=False, error="No tienes permiso para activar usuarios.")
+
+        auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
+        token = auth_header.split(
+            " ", 1)[1] if auth_header.startswith("Bearer ") else ""
+
+        result = auth_client.activar_usuario(email, token)
+
+        if not result or result.get("_error"):
+            return ActivarUsuario(
+                ok=False,
+                error=result.get(
+                    "detail", "Error al activar el usuario.") if result else "Error de conexión.",
+            )
+
+        return ActivarUsuario(ok=True)
+
+
+# ─────────────────────────────────────────
 # VERIFICAR CÓDIGO
 # ─────────────────────────────────────────
 
@@ -175,7 +259,6 @@ class VerificarCodigo(graphene.Mutation):
     """
     Verifica el código de 6 dígitos enviado al email.
     Activa la cuenta si es correcto.
-    Retorna intentos_restantes si el código es incorrecto.
     """
     class Arguments:
         email = graphene.String(required=True)
@@ -232,7 +315,6 @@ def _extraer_error(result: dict) -> str:
     if not result:
         return "Error desconocido."
 
-    # Errores de campo del serializer: {"email": ["mensaje"], "password": [...]}
     errores_campo = {
         k: v for k, v in result.items()
         if k not in ("_error", "status", "detail", "codigo")
@@ -249,7 +331,7 @@ def _extraer_error(result: dict) -> str:
 
 
 # ─────────────────────────────────────────
-# REGISTRO
+# SCHEMA
 # ─────────────────────────────────────────
 
 class AuthMutation(graphene.ObjectType):
@@ -259,3 +341,5 @@ class AuthMutation(graphene.ObjectType):
     registrar_usuario = RegistrarUsuario.Field()
     verificar_codigo = VerificarCodigo.Field()
     reenviar_codigo = ReenviarCodigo.Field()
+    desactivar_usuario = DesactivarUsuario.Field()
+    activar_usuario = ActivarUsuario.Field()
