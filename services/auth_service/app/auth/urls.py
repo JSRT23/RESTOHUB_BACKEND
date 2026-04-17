@@ -16,6 +16,7 @@ from .views import (
     UsuariosView,
     VerificarCodigoView,
     VerificarTokenView,
+    VincularEmpleadoView,        # ← NUEVO
 )
 
 urlpatterns = [
@@ -36,15 +37,19 @@ urlpatterns = [
          name="reenviar-codigo"),
 
     # Gestión de usuarios
-    path("usuarios/",                UsuariosView.as_view(),       name="usuarios"),
-    path("usuarios/<uuid:pk>/",
-         UsuarioDetailView.as_view(),  name="usuario-detail"),
+    path("usuarios/",                UsuariosView.as_view(),          name="usuarios"),
+    path("usuarios/<uuid:pk>/",      UsuarioDetailView.as_view(),
+         name="usuario-detail"),
 
     # Activar / desactivar por email (llamados desde el gateway)
     path("usuarios/desactivar/",     DesactivarUsuarioView.as_view(),
          name="usuario-desactivar"),
     path("usuarios/activar/",        ActivarUsuarioView.as_view(),
          name="usuario-activar"),
+
+    # Vincular empleado_id (llamado desde el gateway al crear empleado) ← NUEVO
+    path("usuarios/vincular-empleado/", VincularEmpleadoView.as_view(),
+         name="usuario-vincular-empleado"),
 
     # Verificación interna
     path("verificar/",         VerificarTokenView.as_view(),

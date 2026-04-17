@@ -10,10 +10,6 @@ from ....middleware.permissions import get_jwt_user
 # ─────────────────────────────────────────
 
 class Login(graphene.Mutation):
-    """
-    Inicia sesión y retorna access_token + refresh_token.
-    Si el email no está verificado retorna ok=False con codigo="EMAIL_NO_VERIFICADO".
-    """
     class Arguments:
         email = graphene.String(required=True)
         password = graphene.String(required=True)
@@ -32,10 +28,8 @@ class Login(graphene.Mutation):
         if result.get("_error"):
             detail = result.get("detail", "Error al iniciar sesión.")
             codigo = result.get("codigo", "ERROR")
-
             if codigo == "EMAIL_NO_VERIFICADO":
                 detail = "Debes verificar tu correo antes de iniciar sesión."
-
             return Login(ok=False, error=detail, codigo=codigo)
 
         return Login(ok=True, payload=result)
@@ -46,7 +40,6 @@ class Login(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class RefreshToken(graphene.Mutation):
-    """Renueva el access_token usando el refresh_token."""
     class Arguments:
         refresh_token = graphene.String(required=True)
 
@@ -62,14 +55,10 @@ class RefreshToken(graphene.Mutation):
 
 
 # ─────────────────────────────────────────
-# AUTO-REGISTRO (público — solo admin_central)
+# AUTO-REGISTRO
 # ─────────────────────────────────────────
 
 class AutoRegistro(graphene.Mutation):
-    """
-    Registro público para crear el primer admin_central.
-    Envía código de verificación al email.
-    """
     class Arguments:
         email = graphene.String(required=True)
         nombre = graphene.String(required=True)
@@ -105,19 +94,13 @@ class AutoRegistro(graphene.Mutation):
 
 
 # ─────────────────────────────────────────
-# REGISTRO INTERNO (admin/gerente crean operativos)
+# REGISTRO INTERNO
 # ─────────────────────────────────────────
 
 class RegistrarUsuario(graphene.Mutation):
     """
     Crea un usuario operativo. Requiere token de admin_central o gerente_local.
-    El email es validado con MX lookup. El usuario creado tiene email_verificado=True.
-
-    NOTA: No se requiere empleado_id al momento del registro.
-    El flujo correcto es:
-      1. registrarUsuario en auth_service (sin empleado_id)
-      2. crearEmpleado en staff_service
-    Al hacer login, el JWT se construye vinculando ambos por email.
+    email_verificado=True por defecto (usuario creado internamente).
     """
     class Arguments:
         email = graphene.String(required=True)
@@ -170,16 +153,54 @@ class RegistrarUsuario(graphene.Mutation):
 
 
 # ─────────────────────────────────────────
+# VINCULAR EMPLEADO_ID  ← NUEVO
+# ─────────────────────────────────────────
+
+class VincularEmpleadoId(graphene.Mutation):
+    """
+    Asigna el empleado_id de staff_service a una cuenta de auth por email.
+
+    Se usa en dos flujos:
+    1. Automático: el gateway lo llama internamente al crear un empleado
+       en staff_service (crearEmpleado en staff/mutations.py).
+    2. Manual: desde el admin de usuarios para corregir desincronías.
+
+    Solo admin_central y gerente_local pueden llamar esta mutation.
+    """
+    class Arguments:
+        email = graphene.String(required=True)
+        empleado_id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, email, empleado_id):
+        jwt_user = get_jwt_user(info)
+        if not jwt_user:
+            return VincularEmpleadoId(ok=False, error="Debes iniciar sesión.")
+
+        if jwt_user.get("rol") not in ("admin_central", "gerente_local"):
+            return VincularEmpleadoId(ok=False, error="No tienes permiso.")
+
+        auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
+        token = auth_header.split(
+            " ", 1)[1] if auth_header.startswith("Bearer ") else ""
+
+        result = auth_client.vincular_empleado(email, str(empleado_id), token)
+
+        if not result or result.get("_error"):
+            msg = result.get(
+                "detail", "Error al vincular empleado_id.") if result else "Error de conexión."
+            return VincularEmpleadoId(ok=False, error=msg)
+
+        return VincularEmpleadoId(ok=True)
+
+
+# ─────────────────────────────────────────
 # DESACTIVAR USUARIO
 # ─────────────────────────────────────────
 
 class DesactivarUsuario(graphene.Mutation):
-    """
-    Desactiva la cuenta de un usuario en auth_service por email.
-    Revoca el acceso al login de forma inmediata.
-    Se llama en paralelo con desactivarEmpleado en staff_service.
-    Solo permitido para admin_central y gerente_local.
-    """
     class Arguments:
         email = graphene.String(required=True)
 
@@ -215,12 +236,6 @@ class DesactivarUsuario(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class ActivarUsuario(graphene.Mutation):
-    """
-    Reactiva la cuenta de un usuario en auth_service por email.
-    Restaura el acceso al login.
-    Se llama en paralelo con activarEmpleado en staff_service.
-    Solo permitido para admin_central y gerente_local.
-    """
     class Arguments:
         email = graphene.String(required=True)
 
@@ -256,10 +271,6 @@ class ActivarUsuario(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class VerificarCodigo(graphene.Mutation):
-    """
-    Verifica el código de 6 dígitos enviado al email.
-    Activa la cuenta si es correcto.
-    """
     class Arguments:
         email = graphene.String(required=True)
         codigo = graphene.String(required=True)
@@ -291,7 +302,6 @@ class VerificarCodigo(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class ReenviarCodigo(graphene.Mutation):
-    """Reenvía el código de verificación al email."""
     class Arguments:
         email = graphene.String(required=True)
 
@@ -308,10 +318,6 @@ class ReenviarCodigo(graphene.Mutation):
 # ─────────────────────────────────────────
 
 def _extraer_error(result: dict) -> str:
-    """
-    Extrae el mensaje de error más útil de la respuesta del auth_service.
-    Maneja errores de validación del serializer (DRF) y errores simples.
-    """
     if not result:
         return "Error desconocido."
 
@@ -343,3 +349,4 @@ class AuthMutation(graphene.ObjectType):
     reenviar_codigo = ReenviarCodigo.Field()
     desactivar_usuario = DesactivarUsuario.Field()
     activar_usuario = ActivarUsuario.Field()
+    vincular_empleado_id = VincularEmpleadoId.Field()   # ← NUEVO

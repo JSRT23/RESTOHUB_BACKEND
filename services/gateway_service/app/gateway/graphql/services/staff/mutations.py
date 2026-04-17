@@ -1,11 +1,16 @@
 # gateway_service/app/gateway/graphql/services/staff/mutations.py
+import logging
+
 import graphene
-from ....client import staff_client
+
+from ....client import staff_client, auth_client
 from .types import (
     AlertaOperacionalType, EmpleadoType, EstacionCocinaType,
     PrediccionPersonalType, RegistroAsistenciaType,
     ResumenNominaType, TurnoType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────
@@ -16,13 +21,16 @@ class CrearEmpleado(graphene.Mutation):
     """
     Crea un empleado en staff_service.
 
-    IMPORTANTE: el campo `restaurante` debe ser el UUID del restaurante
-    en menu_service (restaurante_id externo). El staff_service resuelve
-    internamente el RestauranteLocal correspondiente usando ese UUID.
+    Flujo completo:
+      1. Crea el empleado en staff_service.
+      2. Auto-vincula el empleado_id resultante en auth_service (por email).
+         Esto sincroniza las dos fuentes de verdad automáticamente.
 
-    El gateway pasa el restaurante_id del menu_service directamente —
-    el serializer de staff_service fue actualizado para aceptar
-    restaurante_id (UUID externo) en lugar de la PK interna.
+    Si la vinculación en auth falla (cuenta aún no creada, etc.),
+    se loguea el error pero NO se revierte el empleado — la vinculación
+    puede hacerse manualmente desde la vista de admin de usuarios.
+
+    El campo `restaurante` recibe el UUID del restaurante en menu_service.
     """
     class Arguments:
         nombre = graphene.String(required=True)
@@ -32,7 +40,7 @@ class CrearEmpleado(graphene.Mutation):
         telefono = graphene.String()
         rol = graphene.String(required=True)
         pais = graphene.String(required=True)
-        restaurante = graphene.ID(required=True)   # UUID del menu_service
+        restaurante = graphene.ID(required=True)
         fecha_contratacion = graphene.String()
 
     empleado = graphene.Field(EmpleadoType)
@@ -40,12 +48,49 @@ class CrearEmpleado(graphene.Mutation):
     errores = graphene.String()
 
     def mutate(self, info, **kwargs):
+        # 1. Crear empleado en staff_service
         data = staff_client.crear_empleado(kwargs)
         if not data:
             return CrearEmpleado(ok=False, errores="Error al crear el empleado.")
         if isinstance(data, dict) and data.get("_error"):
             errores = _extraer_errores(data)
             return CrearEmpleado(ok=False, errores=errores)
+
+        empleado_id = data.get("id")
+        email = kwargs.get("email", "")
+
+        # 2. Auto-vincular empleado_id en auth_service
+        if empleado_id and email:
+            auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
+            token = auth_header.split(
+                " ", 1)[1] if auth_header.startswith("Bearer ") else ""
+
+            try:
+                result = auth_client.vincular_empleado(
+                    email=email,
+                    empleado_id=str(empleado_id),
+                    token=token,
+                )
+                if result and not result.get("_error"):
+                    logger.info(
+                        "[crearEmpleado] empleado_id %s vinculado en auth para %s",
+                        empleado_id, email,
+                    )
+                else:
+                    # No es fatal — puede que la cuenta auth aún no exista
+                    # (flujo: primero staff, luego auth o vice-versa)
+                    detail = result.get(
+                        "detail", "desconocido") if result else "sin respuesta"
+                    logger.warning(
+                        "[crearEmpleado] No se pudo vincular empleado_id en auth para %s: %s",
+                        email, detail,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "[crearEmpleado] Excepción al vincular empleado_id para %s: %s",
+                    email, exc,
+                )
+
         return CrearEmpleado(ok=True, empleado=data)
 
 
@@ -327,7 +372,6 @@ class CrearPrediccion(graphene.Mutation):
 # ─────────────────────────────────────────
 
 def _extraer_errores(data: dict) -> str:
-    """Extrae mensaje de error del response del staff_service."""
     if not data:
         return "Error desconocido."
     errores_campo = {

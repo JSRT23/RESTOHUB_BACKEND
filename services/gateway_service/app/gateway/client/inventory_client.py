@@ -34,10 +34,13 @@ def _get(path: str, params: dict = None) -> dict | list | None:
     except httpx.HTTPStatusError as e:
         logger.error("[inventory_client] HTTP %s: %s",
                      e.response.status_code, path)
-        return None
+        try:
+            return {"_error": True, "status": e.response.status_code, **e.response.json()}
+        except Exception:
+            return {"_error": True, "status": e.response.status_code, "detail": str(e)}
     except httpx.RequestError as e:
         logger.error("[inventory_client] Request error: %s", e)
-        return None
+        return {"_error": True, "detail": str(e)}
 
 
 def _post(path: str, data: dict = None) -> dict | None:
@@ -50,10 +53,13 @@ def _post(path: str, data: dict = None) -> dict | None:
     except httpx.HTTPStatusError as e:
         logger.error("[inventory_client] HTTP %s: %s",
                      e.response.status_code, path)
-        return None
+        try:
+            return {"_error": True, "status": e.response.status_code, **e.response.json()}
+        except Exception:
+            return {"_error": True, "status": e.response.status_code, "detail": str(e)}
     except httpx.RequestError as e:
         logger.error("[inventory_client] Request error: %s", e)
-        return None
+        return {"_error": True, "detail": str(e)}
 
 
 def _patch(path: str, data: dict) -> dict | None:
@@ -66,10 +72,41 @@ def _patch(path: str, data: dict) -> dict | None:
     except httpx.HTTPStatusError as e:
         logger.error("[inventory_client] HTTP %s: %s",
                      e.response.status_code, path)
-        return None
+        try:
+            return {"_error": True, "status": e.response.status_code, **e.response.json()}
+        except Exception:
+            return {"_error": True, "status": e.response.status_code, "detail": str(e)}
     except httpx.RequestError as e:
         logger.error("[inventory_client] Request error: %s", e)
-        return None
+        return {"_error": True, "detail": str(e)}
+
+
+# ─────────────────────────────────────────
+# Helpers internos
+# ─────────────────────────────────────────
+
+def _is_error(data) -> bool:
+    """True si la respuesta es un dict con _error=True."""
+    return isinstance(data, dict) and data.get("_error") is True
+
+
+def _extract_error(data: dict, fallback: str) -> str:
+    """Extrae el mensaje de error más útil de una respuesta con _error."""
+    if not data:
+        return fallback
+    # Errores de validación DRF: {"field": ["msg"]}
+    errores_campo = {
+        k: v for k, v in data.items()
+        if k not in ("_error", "status", "detail")
+        and isinstance(v, (list, str))
+    }
+    if errores_campo:
+        partes = []
+        for campo, msg in errores_campo.items():
+            texto = msg[0] if isinstance(msg, list) else msg
+            partes.append(f"{campo}: {texto}")
+        return " | ".join(partes)
+    return data.get("detail") or data.get("error") or fallback
 
 
 # ─────────────────────────────────────────
@@ -77,10 +114,6 @@ def _patch(path: str, data: dict) -> dict | None:
 # ─────────────────────────────────────────
 
 def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
-    """
-    Listado de proveedores con filtros opcionales.
-    Usado directamente por admin_central.
-    """
     params = {}
     if activo is not None:
         params["activo"] = activo
@@ -90,19 +123,14 @@ def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
         params["ciudad"] = ciudad
     if alcance:
         params["alcance"] = alcance
-    return _get("/proveedores/", params=params) or []
+    result = _get("/proveedores/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_proveedores_para_gerente(restaurante_id: str, pais: str = None,
                                  ciudad: str = None, activo=None):
-    """
-    Filtro de visibilidad Opción B para gerente_local.
-    El inventory_service recibe estos params y aplica:
-      alcance=GLOBAL
-      OR (alcance=PAIS AND pais_destino=pais)
-      OR (alcance=CIUDAD AND ciudad_destino=ciudad)
-      OR (alcance=LOCAL AND creado_por_restaurante_id=restaurante_id)
-    """
     params = {"scope": "gerente"}
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
@@ -112,11 +140,15 @@ def get_proveedores_para_gerente(restaurante_id: str, pais: str = None,
         params["ciudad_destino"] = ciudad
     if activo is not None:
         params["activo"] = activo
-    return _get("/proveedores/", params=params) or []
+    result = _get("/proveedores/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_proveedor(id: str):
-    return _get(f"/proveedores/{id}/")
+    result = _get(f"/proveedores/{id}/")
+    return None if _is_error(result) else result
 
 
 def crear_proveedor(data: dict):
@@ -137,18 +169,25 @@ def get_almacenes(restaurante_id=None, activo=None):
         params["restaurante_id"] = restaurante_id
     if activo is not None:
         params["activo"] = activo
-    return _get("/almacenes/", params=params) or []
+    result = _get("/almacenes/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_almacen(id: str):
-    return _get(f"/almacenes/{id}/")
+    result = _get(f"/almacenes/{id}/")
+    return None if _is_error(result) else result
 
 
 def get_stock_almacen(id: str, bajo_minimo=None):
     params = {}
     if bajo_minimo:
         params["bajo_minimo"] = "true"
-    return _get(f"/almacenes/{id}/stock/", params=params) or []
+    result = _get(f"/almacenes/{id}/stock/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def crear_almacen(data: dict):
@@ -167,11 +206,15 @@ def get_stock(almacen_id=None, bajo_minimo=None, agotado=None):
         params["bajo_minimo"] = "true"
     if agotado:
         params["agotado"] = "true"
-    return _get("/stock/", params=params) or []
+    result = _get("/stock/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_stock_item(id: str):
-    return _get(f"/stock/{id}/")
+    result = _get(f"/stock/{id}/")
+    return None if _is_error(result) else result
 
 
 def crear_stock(data: dict):
@@ -186,11 +229,15 @@ def ajustar_stock(id: str, cantidad: float, descripcion: str):
 
 
 def get_movimientos(id: str):
-    return _get(f"/stock/{id}/movimientos/") or []
+    result = _get(f"/stock/{id}/movimientos/")
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_costo_plato(plato_id: str):
-    return _get("/stock/costo-plato/", params={"plato_id": plato_id})
+    result = _get("/stock/costo-plato/", params={"plato_id": plato_id})
+    return None if _is_error(result) else result
 
 
 # ─────────────────────────────────────────
@@ -205,11 +252,15 @@ def get_lotes(estado=None, almacen_id=None, por_vencer=None):
         params["almacen_id"] = almacen_id
     if por_vencer:
         params["por_vencer"] = por_vencer
-    return _get("/lotes/", params=params) or []
+    result = _get("/lotes/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_lote(id: str):
-    return _get(f"/lotes/{id}/")
+    result = _get(f"/lotes/{id}/")
+    return None if _is_error(result) else result
 
 
 def crear_lote(data: dict):
@@ -232,11 +283,15 @@ def get_ordenes_compra(estado=None, proveedor_id=None, restaurante_id=None):
         params["proveedor_id"] = proveedor_id
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
-    return _get("/ordenes-compra/", params=params) or []
+    result = _get("/ordenes-compra/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_orden_compra(id: str):
-    return _get(f"/ordenes-compra/{id}/")
+    result = _get(f"/ordenes-compra/{id}/")
+    return None if _is_error(result) else result
 
 
 def crear_orden_compra(data: dict):
@@ -267,11 +322,15 @@ def get_alertas(tipo=None, estado=None, restaurante_id=None):
         params["estado"] = estado
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
-    return _get("/alertas/", params=params) or []
+    result = _get("/alertas/", params=params)
+    if _is_error(result):
+        return []
+    return result or []
 
 
 def get_alerta(id: str):
-    return _get(f"/alertas/{id}/")
+    result = _get(f"/alertas/{id}/")
+    return None if _is_error(result) else result
 
 
 def resolver_alerta(id: str):

@@ -21,11 +21,6 @@ from .tokens import generar_access_token, generar_refresh_token, verificar_token
 # ─────────────────────────────────────────────────────────────────────────────
 
 class LoginView(APIView):
-    """
-    POST /api/auth/login/
-    Bloquea el acceso si el email no fue verificado.
-    """
-
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if not serializer.is_valid():
@@ -59,8 +54,6 @@ class LoginView(APIView):
 
 
 class RefreshView(APIView):
-    """POST /api/auth/refresh/"""
-
     def post(self, request):
         refresh_token_str = request.data.get("refresh_token")
         if not refresh_token_str:
@@ -88,7 +81,6 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
-    """POST /api/auth/logout/"""
     @requiere_auth
     def post(self, request):
         refresh_token_str = request.data.get("refresh_token")
@@ -100,7 +92,6 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """GET/PATCH /api/auth/me/"""
     @requiere_auth
     def get(self, request):
         return Response(UsuarioSerializer(request.usuario).data)
@@ -117,7 +108,6 @@ class MeView(APIView):
 
 
 class CambiarPasswordView(APIView):
-    """POST /api/auth/cambiar-password/"""
     @requiere_auth
     def post(self, request):
         serializer = CambiarPasswordSerializer(data=request.data)
@@ -143,12 +133,6 @@ class CambiarPasswordView(APIView):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AutoRegistroView(APIView):
-    """
-    POST /api/auth/auto-registro/
-    Registro público — solo para admin_central.
-    Crea el usuario y envía el código de verificación por email.
-    """
-
     def post(self, request):
         serializer = RegistroSerializer(data=request.data)
         if not serializer.is_valid():
@@ -179,11 +163,6 @@ class AutoRegistroView(APIView):
 
 
 class VerificarCodigoView(APIView):
-    """
-    POST /api/auth/verificar-codigo/
-    Body: { email, codigo }
-    """
-
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
         codigo = request.data.get("codigo", "").strip()
@@ -212,30 +191,24 @@ class VerificarCodigoView(APIView):
 
         if not codigo_obj:
             return Response(
-                {
-                    "detail": "No hay un código activo. Solicita uno nuevo.",
-                    "codigo": "SIN_CODIGO",
-                },
+                {"detail": "No hay un código activo. Solicita uno nuevo.",
+                    "codigo": "SIN_CODIGO"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if codigo_obj.ha_expirado:
             codigo_obj.delete()
             return Response(
-                {
-                    "detail": "El código expiró. Solicita uno nuevo.",
-                    "codigo": "CODIGO_EXPIRADO",
-                },
+                {"detail": "El código expiró. Solicita uno nuevo.",
+                    "codigo": "CODIGO_EXPIRADO"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if codigo_obj.intentos_agotados:
             codigo_obj.delete()
             return Response(
-                {
-                    "detail": "Demasiados intentos fallidos. Solicita un nuevo código.",
-                    "codigo": "INTENTOS_AGOTADOS",
-                },
+                {"detail": "Demasiados intentos fallidos. Solicita un nuevo código.",
+                    "codigo": "INTENTOS_AGOTADOS"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -264,11 +237,6 @@ class VerificarCodigoView(APIView):
 
 
 class ReenviarCodigoView(APIView):
-    """
-    POST /api/auth/reenviar-codigo/
-    Body: { email }
-    """
-
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
         if not email:
@@ -294,11 +262,6 @@ class ReenviarCodigoView(APIView):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RegistroView(APIView):
-    """
-    POST /api/auth/registro/
-    Solo admin_central y gerente_local pueden usar este endpoint.
-    Los usuarios creados aquí tienen email_verificado=True por defecto.
-    """
     @requiere_auth
     def post(self, request):
         creador = request.usuario
@@ -337,11 +300,22 @@ class RegistroView(APIView):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class UsuariosView(APIView):
-    """GET /api/auth/usuarios/"""
+    """GET /api/auth/usuarios/ — lista todas las cuentas."""
     @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
     def get(self, request):
         if request.usuario.rol == Rol.ADMIN_CENTRAL:
-            qs = Usuario.objects.all().order_by("rol", "email")
+            # Admin ve todos; acepta filtros opcionales
+            qs = Usuario.objects.all()
+            rol = request.query_params.get("rol")
+            activo = request.query_params.get("activo")
+            restaurante_id = request.query_params.get("restaurante_id")
+            if rol:
+                qs = qs.filter(rol=rol)
+            if activo is not None:
+                qs = qs.filter(activo=activo.lower() == "true")
+            if restaurante_id:
+                qs = qs.filter(restaurante_id=restaurante_id)
+            qs = qs.order_by("rol", "email")
         else:
             qs = Usuario.objects.filter(
                 restaurante_id=request.usuario.restaurante_id
@@ -350,8 +324,6 @@ class UsuariosView(APIView):
 
 
 class UsuarioDetailView(APIView):
-    """GET/PATCH/DELETE /api/auth/usuarios/<id>/"""
-
     def _get_usuario(self, pk, request_usuario):
         try:
             u = Usuario.objects.get(pk=pk)
@@ -401,18 +373,9 @@ class UsuarioDetailView(APIView):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Desactivar / Activar usuario por email
-# Llamados desde el gateway cuando el gerente desactiva o reactiva un empleado.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DesactivarUsuarioView(APIView):
-    """
-    POST /api/auth/usuarios/desactivar/
-    Body: { "email": "empleado@ejemplo.com" }
-
-    Desactiva la cuenta — el usuario no podrá iniciar sesión.
-    Revoca todos sus refresh tokens activos para invalidar sesiones abiertas.
-    Solo accesible para admin_central y gerente_local.
-    """
     @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
@@ -430,7 +393,6 @@ class DesactivarUsuarioView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Protección: el gerente solo puede desactivar usuarios de su restaurante
         if (request.usuario.rol == Rol.GERENTE_LOCAL
                 and usuario.restaurante_id != request.usuario.restaurante_id):
             return Response(
@@ -438,14 +400,12 @@ class DesactivarUsuarioView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Protección: nadie puede desactivarse a sí mismo desde aquí
         if usuario.id == request.usuario.id:
             return Response(
                 {"detail": "No puedes desactivar tu propia cuenta."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Protección: gerente no puede desactivar a otro gerente o admin
         if (request.usuario.rol == Rol.GERENTE_LOCAL
                 and usuario.rol in (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)):
             return Response(
@@ -459,7 +419,6 @@ class DesactivarUsuarioView(APIView):
         usuario.activo = False
         usuario.save(update_fields=["activo"])
 
-        # Revocar todas las sesiones activas del usuario
         RefreshToken.objects.filter(
             usuario=usuario, revocado=False).update(revocado=True)
 
@@ -467,13 +426,6 @@ class DesactivarUsuarioView(APIView):
 
 
 class ActivarUsuarioView(APIView):
-    """
-    POST /api/auth/usuarios/activar/
-    Body: { "email": "empleado@ejemplo.com" }
-
-    Reactiva la cuenta — el usuario puede iniciar sesión nuevamente.
-    Solo accesible para admin_central y gerente_local.
-    """
     @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
@@ -491,7 +443,6 @@ class ActivarUsuarioView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Protección: el gerente solo puede activar usuarios de su restaurante
         if (request.usuario.rol == Rol.GERENTE_LOCAL
                 and usuario.restaurante_id != request.usuario.restaurante_id):
             return Response(
@@ -499,7 +450,6 @@ class ActivarUsuarioView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Protección: gerente no puede reactivar a otro gerente o admin
         if (request.usuario.rol == Rol.GERENTE_LOCAL
                 and usuario.rol in (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)):
             return Response(
@@ -517,12 +467,78 @@ class ActivarUsuarioView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Vincular empleado_id  ← NUEVO
+# Llamado desde el gateway cuando se crea un empleado en staff_service
+# para sincronizar el empleado_id en auth_service.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VincularEmpleadoView(APIView):
+    """
+    POST /api/auth/usuarios/vincular-empleado/
+    Body: { "email": "...", "empleado_id": "uuid" }
+
+    Asigna el empleado_id de staff_service a la cuenta de auth.
+    Solo admin_central y gerente_local pueden llamar este endpoint.
+    Se llama automáticamente desde el gateway al crear un empleado,
+    y también puede llamarse manualmente desde el admin de usuarios.
+    """
+    @requiere_rol(Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL)
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        empleado_id = request.data.get("empleado_id", "").strip()
+
+        if not email:
+            return Response(
+                {"detail": "El campo 'email' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not empleado_id:
+            return Response(
+                {"detail": "El campo 'empleado_id' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            usuario = Usuario.objects.get(email=email)
+        except Usuario.DoesNotExist:
+            return Response(
+                {"detail": f"No existe un usuario con email '{email}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Gerente solo puede vincular empleados de su restaurante
+        if (request.usuario.rol == Rol.GERENTE_LOCAL
+                and usuario.restaurante_id != request.usuario.restaurante_id):
+            return Response(
+                {"detail": "No puedes vincular empleados de otro restaurante."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Validar que el UUID sea válido
+        import uuid as uuid_mod
+        try:
+            uuid_mod.UUID(empleado_id)
+        except ValueError:
+            return Response(
+                {"detail": "El 'empleado_id' no es un UUID válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        usuario.empleado_id = empleado_id
+        usuario.save(update_fields=["empleado_id"])
+
+        return Response({
+            "ok": True,
+            "email": usuario.email,
+            "empleado_id": str(usuario.empleado_id),
+        })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Verificación interna (gateway)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class VerificarTokenView(APIView):
-    """POST /api/auth/verificar/ — usado por el gateway."""
-
     def post(self, request):
         token = request.data.get("token")
         if not token:

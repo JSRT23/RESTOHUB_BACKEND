@@ -63,11 +63,14 @@ def _post_auth(path: str, data: dict, token: str):
         return {"_error": True, "detail": str(exc)}
 
 
-def _get(path: str, headers: dict = None):
+def _get(path: str, headers: dict = None, params: dict = None):
     try:
         with httpx.Client(timeout=10) as client:
             response = client.get(
-                f"{AUTH_SERVICE_URL}{path}", headers=headers or {})
+                f"{AUTH_SERVICE_URL}{path}",
+                headers=headers or {},
+                params=params or {},
+            )
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:
@@ -88,7 +91,6 @@ def auto_registro(data: dict) -> dict:
 
 
 def registro(data: dict, token: str) -> dict:
-    """Registro interno — requiere token de admin/gerente."""
     return _post_auth("/registro/", data, token)
 
 
@@ -105,23 +107,54 @@ def refresh_token(refresh_token_str: str) -> dict:
 
 
 def verificar_jwt(token: str) -> dict:
-    """Verifica el JWT — usado por el middleware."""
     return _post("/verificar/", {"token": token})
 
 
 def desactivar_usuario(email: str, token: str) -> dict:
-    """
-    Desactiva la cuenta de un usuario en auth_service.
-    Se llama junto con desactivarEmpleado en staff_service para
-    revocar el acceso al login de forma inmediata.
-    """
     return _post_auth("/usuarios/desactivar/", {"email": email}, token)
 
 
 def activar_usuario(email: str, token: str) -> dict:
-    """
-    Reactiva la cuenta de un usuario en auth_service.
-    Se llama junto con activarEmpleado en staff_service para
-    restaurar el acceso al login.
-    """
     return _post_auth("/usuarios/activar/", {"email": email}, token)
+
+
+def vincular_empleado(email: str, empleado_id: str, token: str) -> dict:
+    """
+    Asigna el empleado_id de staff_service a la cuenta auth por email.
+    Se llama automáticamente desde el gateway al crear un empleado en staff_service.
+    También puede llamarse manualmente desde la vista de admin de usuarios.
+    """
+    return _post_auth(
+        "/usuarios/vincular-empleado/",
+        {"email": email, "empleado_id": empleado_id},
+        token,
+    )
+
+
+def get_usuarios(rol: str = None, activo: bool = None,
+                 restaurante_id: str = None, token: str = None) -> list:
+    """
+    Lista usuarios del auth_service.
+    Requiere token de admin_central o gerente_local.
+    """
+    params = {}
+    if rol:
+        params["rol"] = rol
+    if activo is not None:
+        params["activo"] = str(activo).lower()
+    if restaurante_id:
+        params["restaurante_id"] = restaurante_id
+
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    result = _get("/usuarios/", headers=headers, params=params)
+    if result is None:
+        return []
+    if isinstance(result, list):
+        return result
+    # DRF paginado: {"count": N, "results": [...]}
+    if isinstance(result, dict) and "results" in result:
+        return result["results"]
+    return []

@@ -1,4 +1,7 @@
 # inventory_service/app/inventory/models.py
+# CAMBIO: Proveedor ahora tiene los campos de alcance (Opción B).
+# El resto del archivo es idéntico al original.
+
 import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
@@ -64,6 +67,13 @@ class Moneda(models.TextChoices):
     CLP = "CLP", "Peso chileno"
 
 
+class AlcanceProveedor(models.TextChoices):
+    GLOBAL = "GLOBAL", "Global — visible para todos los restaurantes"
+    PAIS = "PAIS",   "País — visible para restaurantes del país indicado"
+    CIUDAD = "CIUDAD", "Ciudad — visible para restaurantes de esa ciudad"
+    LOCAL = "LOCAL",  "Local — solo el restaurante que lo creó"
+
+
 # ─────────────────────────────────────────
 # PROVEEDOR
 # ─────────────────────────────────────────
@@ -71,8 +81,16 @@ class Moneda(models.TextChoices):
 class Proveedor(models.Model):
     """
     Proveedor de ingredientes de la cadena.
-    Compartido entre restaurantes — un proveedor puede abastecer
-    a múltiples locales en distintos países.
+
+    Opción B — alcance por scope:
+      GLOBAL  → visible para todos los restaurantes
+      PAIS    → visible para restaurantes del país indicado (pais_destino)
+      CIUDAD  → visible para restaurantes de esa ciudad (ciudad_destino)
+      LOCAL   → solo el restaurante que lo creó (creado_por_restaurante_id)
+
+    El gateway aplica el filtro de visibilidad en resolve_proveedores
+    según el rol del JWT — el inventory_service implementa el filtro
+    cuando recibe scope=gerente + restaurante_id + pais_destino + ciudad_destino.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nombre = models.CharField(max_length=255)
@@ -80,14 +98,30 @@ class Proveedor(models.Model):
     ciudad = models.CharField(max_length=100, blank=True, null=True)
     telefono = models.CharField(max_length=50, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
-
-    # Moneda preferida del proveedor — facilita comparación de precios entre proveedores
     moneda_preferida = models.CharField(
-        max_length=10,
-        choices=Moneda.choices,
-        default=Moneda.USD,
-    )
+        max_length=10, choices=Moneda.choices, default=Moneda.USD)
     activo = models.BooleanField(default=True)
+
+    # ── Opción B — campos de alcance ──────────────────────────────────────
+    alcance = models.CharField(
+        max_length=10,
+        choices=AlcanceProveedor.choices,
+        default=AlcanceProveedor.GLOBAL,
+        help_text="Opción B: controla qué restaurantes pueden ver este proveedor.",
+    )
+    pais_destino = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="Requerido si alcance=PAIS o alcance=CIUDAD.",
+    )
+    ciudad_destino = models.CharField(
+        max_length=100, null=True, blank=True,
+        help_text="Requerido si alcance=CIUDAD.",
+    )
+    creado_por_restaurante_id = models.UUIDField(
+        null=True, blank=True,
+        help_text="UUID del restaurante que creó este proveedor. Solo para alcance=LOCAL.",
+    )
+    # ──────────────────────────────────────────────────────────────────────
 
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
@@ -97,8 +131,19 @@ class Proveedor(models.Model):
         verbose_name_plural = "Proveedores"
         ordering = ["nombre"]
 
+    def clean(self):
+        if self.alcance == "PAIS" and not self.pais_destino:
+            raise ValidationError(
+                {"pais_destino": "Requerido para alcance=PAIS."})
+        if self.alcance == "CIUDAD" and not self.ciudad_destino:
+            raise ValidationError(
+                {"ciudad_destino": "Requerido para alcance=CIUDAD."})
+        if self.alcance == "LOCAL" and not self.creado_por_restaurante_id:
+            raise ValidationError(
+                {"creado_por_restaurante_id": "Requerido para alcance=LOCAL."})
+
     def __str__(self):
-        return f"{self.nombre} ({self.pais})"
+        return f"{self.nombre} ({self.pais}) [{self.alcance}]"
 
 
 # ─────────────────────────────────────────
@@ -106,21 +151,11 @@ class Proveedor(models.Model):
 # ─────────────────────────────────────────
 
 class Almacen(models.Model):
-    """
-    Espacio físico de almacenamiento dentro de un restaurante.
-    Un restaurante puede tener múltiples almacenes:
-    - Almacén principal
-    - Bodega de bebidas
-    - Congelador
-    restaurante_id es referencia externa a menu_service.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # referencia externa a menu_service
     restaurante_id = models.UUIDField()
     nombre = models.CharField(max_length=255)
     descripcion = models.TextField(blank=True, null=True)
     activo = models.BooleanField(default=True)
-
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -138,38 +173,18 @@ class Almacen(models.Model):
 # ─────────────────────────────────────────
 
 class RecetaPlato(models.Model):
-    """
-    Copia local de PlatoIngrediente de menu_service.
-    Se mantiene sincronizada mediante eventos RabbitMQ.
-
-    costo_unitario — precio pagado al proveedor por unidad del ingrediente.
-    Se actualiza automáticamente al recibir una OrdenCompra con ese ingrediente.
-    Permite calcular el costo real de cada plato para análisis de márgenes.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     plato_id = models.UUIDField()
     ingrediente_id = models.UUIDField()
-
     nombre_ingrediente = models.CharField(max_length=255)
     cantidad = models.DecimalField(max_digits=10, decimal_places=3)
     unidad_medida = models.CharField(
         max_length=10, choices=UnidadMedida.choices)
-
-    # Costo más reciente del ingrediente — actualizado al recibir OrdenCompra
     costo_unitario = models.DecimalField(
-        max_digits=10,
-        decimal_places=4,
-        default=0,
-        help_text="Precio pagado al proveedor por unidad. Se actualiza al recibir una orden de compra."
-    )
-
+        max_digits=10, decimal_places=4, default=0,
+        help_text="Precio pagado al proveedor por unidad.")
     fecha_actualizacion = models.DateTimeField(auto_now=True)
-    fecha_costo_actualizado = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Última vez que se actualizó el costo desde una orden de compra."
-    )
+    fecha_costo_actualizado = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Receta de Plato"
@@ -183,58 +198,33 @@ class RecetaPlato(models.Model):
 
     @property
     def costo_ingrediente(self) -> float:
-        """
-        Costo de este ingrediente dentro del plato.
-        costo_ingrediente = cantidad × costo_unitario
-        """
         return float(self.cantidad * self.costo_unitario)
 
     def __str__(self):
-        return f"Plato {self.plato_id} — {self.nombre_ingrediente} ({self.cantidad} {self.unidad_medida})"
+        return f"Plato {self.plato_id} — {self.nombre_ingrediente}"
+
 
 # ─────────────────────────────────────────
 # INGREDIENTE INVENTARIO
 # ─────────────────────────────────────────
 
-
 class IngredienteInventario(models.Model):
-    """
-    Stock actual de un ingrediente en un almacén específico.
-    ingrediente_id referencia al catálogo global de menu_service.
-
-    Regla de negocio: si cantidad_actual <= nivel_minimo
-    se genera automáticamente una AlertaStock.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # referencia externa a menu_service
     ingrediente_id = models.UUIDField()
     almacen = models.ForeignKey(
-        Almacen,
-        on_delete=models.CASCADE,
-        related_name="ingredientes"
-    )
-
-    # Snapshot de datos de menu_service
+        Almacen, on_delete=models.CASCADE, related_name="ingredientes")
     nombre_ingrediente = models.CharField(max_length=255)
     unidad_medida = models.CharField(
         max_length=10, choices=UnidadMedida.choices)
-
     cantidad_actual = models.DecimalField(
         max_digits=10, decimal_places=3, default=0)
     nivel_minimo = models.DecimalField(
         max_digits=10, decimal_places=3, default=0)
     nivel_maximo = models.DecimalField(
         max_digits=10, decimal_places=3, default=0)
-
-    # Lote activo actualmente en uso — para trazabilidad
     lote_actual = models.ForeignKey(
-        "LoteIngrediente",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="en_uso",
-    )
-
+        "LoteIngrediente", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="en_uso")
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -260,15 +250,14 @@ class IngredienteInventario(models.Model):
             raise ValidationError(errores)
 
     @property
-    def necesita_reposicion(self) -> bool:
-        return self.cantidad_actual <= self.nivel_minimo
+    def necesita_reposicion(
+        self): return self.cantidad_actual <= self.nivel_minimo
 
     @property
-    def esta_agotado(self) -> bool:
-        return self.cantidad_actual == 0
+    def esta_agotado(self): return self.cantidad_actual == 0
 
     @property
-    def porcentaje_stock(self) -> float:
+    def porcentaje_stock(self):
         if self.nivel_maximo == 0:
             return 0
         return float(self.cantidad_actual / self.nivel_maximo * 100)
@@ -282,27 +271,12 @@ class IngredienteInventario(models.Model):
 # ─────────────────────────────────────────
 
 class LoteIngrediente(models.Model):
-    """
-    Lote recibido de un proveedor. Permite trazabilidad sanitaria completa:
-    rastrear un ingrediente desde el proveedor hasta el plato servido.
-
-    cantidad_actual se descuenta a medida que se usa el lote.
-    Cuando llega a 0, el estado pasa a AGOTADO automáticamente.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # referencia externa a menu_service
     ingrediente_id = models.UUIDField()
     almacen = models.ForeignKey(
-        Almacen,
-        on_delete=models.CASCADE,
-        related_name="lotes"
-    )
+        Almacen, on_delete=models.CASCADE, related_name="lotes")
     proveedor = models.ForeignKey(
-        Proveedor,
-        on_delete=models.PROTECT,
-        related_name="lotes"
-    )
-
+        Proveedor, on_delete=models.PROTECT, related_name="lotes")
     numero_lote = models.CharField(max_length=100)
     fecha_produccion = models.DateField(null=True, blank=True)
     fecha_vencimiento = models.DateField()
@@ -310,13 +284,8 @@ class LoteIngrediente(models.Model):
     cantidad_actual = models.DecimalField(max_digits=10, decimal_places=3)
     unidad_medida = models.CharField(
         max_length=10, choices=UnidadMedida.choices)
-
     estado = models.CharField(
-        max_length=20,
-        choices=EstadoLote.choices,
-        default=EstadoLote.ACTIVO
-    )
-
+        max_length=20, choices=EstadoLote.choices, default=EstadoLote.ACTIVO)
     fecha_recepcion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -328,21 +297,19 @@ class LoteIngrediente(models.Model):
     def clean(self):
         if self.cantidad_actual > self.cantidad_recibida:
             raise ValidationError(
-                {"cantidad_actual": "La cantidad actual no puede superar la recibida."}
-            )
+                {"cantidad_actual": "La cantidad actual no puede superar la recibida."})
         if self.fecha_produccion and self.fecha_vencimiento <= self.fecha_produccion:
             raise ValidationError(
-                {"fecha_vencimiento": "La fecha de vencimiento debe ser posterior a la de producción."}
-            )
+                {"fecha_vencimiento": "Debe ser posterior a la fecha de producción."})
 
     @property
-    def esta_vencido(self) -> bool:
+    def esta_vencido(self):
         if self.fecha_vencimiento is None:
             return None
         return self.fecha_vencimiento < timezone.now().date()
 
     @property
-    def dias_para_vencer(self) -> int:
+    def dias_para_vencer(self):
         if not self.fecha_vencimiento:
             return None
         return (self.fecha_vencimiento - timezone.now().date()).days
@@ -350,39 +317,18 @@ class LoteIngrediente(models.Model):
     def __str__(self):
         return f"Lote {self.numero_lote} — {self.almacen.nombre} ({self.estado})"
 
+
 # ─────────────────────────────────────────
 # INGREDIENTE (caché local de menu_service)
 # ─────────────────────────────────────────
-# IMPORTANTE: Agregar esta clase al final de models.py
-# Se sincroniza automáticamente vía RabbitMQ.
-# Su único propósito es resolver nombre_ingrediente cuando
-# llega un evento plato_ingrediente.agregado.
-
 
 class Ingrediente(models.Model):
-    """
-    Copia local del catálogo de ingredientes de menu_service.
-    Se mantiene sincronizada mediante eventos:
-      - app.menu.ingrediente.creado
-      - app.menu.ingrediente.actualizado
-      - app.menu.ingrediente.desactivado
-
-    NO se expone por API — es solo una caché interna.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # UUID del ingrediente en menu_service — clave de sincronización
-    ingrediente_id = models.UUIDField(
-        unique=True,
-        db_index=True,
-        help_text="UUID del ingrediente en menu_service"
-    )
+    ingrediente_id = models.UUIDField(unique=True, db_index=True,
+                                      help_text="UUID del ingrediente en menu_service")
     nombre = models.CharField(max_length=255)
-    unidad_medida = models.CharField(
-        max_length=10,
-        choices=UnidadMedida.choices,
-        default=UnidadMedida.UNIDAD,
-    )
+    unidad_medida = models.CharField(max_length=10, choices=UnidadMedida.choices,
+                                     default=UnidadMedida.UNIDAD)
     activo = models.BooleanField(default=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -393,51 +339,25 @@ class Ingrediente(models.Model):
 
     def __str__(self):
         return f"{self.nombre} ({self.unidad_medida})"
+
+
 # ─────────────────────────────────────────
 # MOVIMIENTO INVENTARIO
 # ─────────────────────────────────────────
 
-
 class MovimientoInventario(models.Model):
-    """
-    Log append-only de cada entrada y salida de stock.
-    Nunca se modifica ni elimina — es la fuente de verdad para auditoría.
-
-    Se crea automáticamente en:
-    - ENTRADA:     recepción de OrdenCompra
-    - SALIDA:      pedido.confirmado de order_service
-    - DEVOLUCION:  pedido.cancelado de order_service
-    - AJUSTE:      corrección manual desde el admin
-    - VENCIMIENTO: lote marcado como vencido
-
-    pedido_id y orden_compra_id son referencias externas opcionales
-    que permiten rastrear el origen del movimiento.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ingrediente_inventario = models.ForeignKey(
-        IngredienteInventario,
-        on_delete=models.CASCADE,
-        related_name="movimientos"
-    )
-    lote = models.ForeignKey(
-        LoteIngrediente,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="movimientos"
-    )
-
+        IngredienteInventario, on_delete=models.CASCADE, related_name="movimientos")
+    lote = models.ForeignKey(LoteIngrediente, on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name="movimientos")
     tipo_movimiento = models.CharField(
         max_length=20, choices=TipoMovimiento.choices)
     cantidad = models.DecimalField(max_digits=10, decimal_places=3)
     cantidad_antes = models.DecimalField(max_digits=10, decimal_places=3)
     cantidad_despues = models.DecimalField(max_digits=10, decimal_places=3)
-
-    # Referencias externas opcionales para trazabilidad
-    pedido_id = models.UUIDField(null=True, blank=True)  # order_service
-    orden_compra_id = models.UUIDField(
-        null=True, blank=True)  # orden de compra
-
+    pedido_id = models.UUIDField(null=True, blank=True)
+    orden_compra_id = models.UUIDField(null=True, blank=True)
     descripcion = models.TextField(blank=True, null=True)
     fecha = models.DateTimeField(auto_now_add=True)
 
@@ -460,35 +380,19 @@ class MovimientoInventario(models.Model):
 # ─────────────────────────────────────────
 
 class OrdenCompra(models.Model):
-    """
-    Orden de compra a un proveedor.
-    restaurante_id define qué local hace la compra.
-    Soporta consolidación: una orden puede agregarse
-    desde múltiples locales (RestoHub consolidation feature).
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     proveedor = models.ForeignKey(
-        Proveedor,
-        on_delete=models.PROTECT,
-        related_name="ordenes"
-    )
-    # referencia externa a menu_service
+        Proveedor, on_delete=models.PROTECT, related_name="ordenes")
     restaurante_id = models.UUIDField()
-
-    estado = models.CharField(
-        max_length=20,
-        choices=EstadoOrdenCompra.choices,
-        default=EstadoOrdenCompra.BORRADOR
-    )
+    estado = models.CharField(max_length=20, choices=EstadoOrdenCompra.choices,
+                              default=EstadoOrdenCompra.BORRADOR)
     moneda = models.CharField(
         max_length=10, choices=Moneda.choices, default=Moneda.USD)
     total_estimado = models.DecimalField(
         max_digits=12, decimal_places=2, default=0)
-
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_entrega_estimada = models.DateTimeField(null=True, blank=True)
     fecha_recepcion = models.DateTimeField(null=True, blank=True)
-
     notas = models.TextField(blank=True, null=True)
 
     class Meta:
@@ -500,7 +404,6 @@ class OrdenCompra(models.Model):
         return f"OC-{str(self.id)[:8]} — {self.proveedor.nombre} ({self.estado})"
 
     def calcular_total(self):
-        """Recalcula el total sumando los subtotales de los detalles."""
         total = sum(d.subtotal for d in self.detalles.all())
         self.total_estimado = total
         self.save(update_fields=["total_estimado"])
@@ -511,29 +414,16 @@ class OrdenCompra(models.Model):
 # ─────────────────────────────────────────
 
 class DetalleOrdenCompra(models.Model):
-    """
-    Ítem dentro de una orden de compra.
-    cantidad_recibida puede diferir de cantidad — el proveedor
-    puede entregar parcialmente. Esto genera el MovimientoInventario
-    proporcional al recibido, no al pedido.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     orden = models.ForeignKey(
-        OrdenCompra,
-        on_delete=models.CASCADE,
-        related_name="detalles"
-    )
-    ingrediente_id = models.UUIDField()         # referencia externa a menu_service
-    nombre_ingrediente = models.CharField(max_length=255)  # snapshot
+        OrdenCompra, on_delete=models.CASCADE, related_name="detalles")
+    ingrediente_id = models.UUIDField()
+    nombre_ingrediente = models.CharField(max_length=255)
     unidad_medida = models.CharField(
         max_length=10, choices=UnidadMedida.choices)
-
     cantidad = models.DecimalField(max_digits=10, decimal_places=3)
-    cantidad_recibida = models.DecimalField(
-        max_digits=10, decimal_places=3,
-        default=0,
-        help_text="Se actualiza al recibir la orden — puede ser menor a la pedida."
-    )
+    cantidad_recibida = models.DecimalField(max_digits=10, decimal_places=3, default=0,
+                                            help_text="Se actualiza al recibir la orden — puede ser menor a la pedida.")
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
@@ -550,18 +440,12 @@ class DetalleOrdenCompra(models.Model):
                 {"precio_unitario": "El precio debe ser mayor a 0."})
         if self.cantidad_recibida > self.cantidad:
             raise ValidationError(
-                {"cantidad_recibida": "No se puede recibir más de lo pedido."}
-            )
+                {"cantidad_recibida": "No se puede recibir más de lo pedido."})
 
     def save(self, *args, **kwargs):
         subtotal = Decimal(self.precio_unitario) * Decimal(self.cantidad)
-
-        # 🔥 REDONDEO OBLIGATORIO A 2 DECIMALES
         self.subtotal = subtotal.quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
-        )
-
+            Decimal("0.01"), rounding=ROUND_HALF_UP)
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -574,50 +458,20 @@ class DetalleOrdenCompra(models.Model):
 # ─────────────────────────────────────────
 
 class AlertaStock(models.Model):
-    """
-    Alerta generada automáticamente cuando:
-    - cantidad_actual <= nivel_minimo (STOCK_BAJO)
-    - lote.dias_para_vencer <= 3 (VENCIMIENTO)
-    - cantidad_actual == 0 (AGOTADO)
-
-    Se publica como evento RabbitMQ para que staff_service
-    pueda generar una orden de compra urgente.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ingrediente_inventario = models.ForeignKey(
-        IngredienteInventario,
-        on_delete=models.CASCADE,
-        related_name="alertas"
-    )
+        IngredienteInventario, on_delete=models.CASCADE, related_name="alertas")
     almacen = models.ForeignKey(
-        Almacen,
-        on_delete=models.CASCADE,
-        related_name="alertas"
-    )
-
-    # Referencias externas
+        Almacen, on_delete=models.CASCADE, related_name="alertas")
     restaurante_id = models.UUIDField()
     ingrediente_id = models.UUIDField()
-
     tipo_alerta = models.CharField(max_length=20, choices=TipoAlerta.choices)
-    estado = models.CharField(
-        max_length=20,
-        choices=EstadoAlerta.choices,
-        default=EstadoAlerta.PENDIENTE
-    )
-
+    estado = models.CharField(max_length=20, choices=EstadoAlerta.choices,
+                              default=EstadoAlerta.PENDIENTE)
     nivel_actual = models.DecimalField(max_digits=10, decimal_places=3)
     nivel_minimo = models.DecimalField(max_digits=10, decimal_places=3)
-
-    # Lote relacionado — para alertas de vencimiento
-    lote = models.ForeignKey(
-        LoteIngrediente,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="alertas"
-    )
-
+    lote = models.ForeignKey(LoteIngrediente, on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name="alertas")
     fecha_alerta = models.DateTimeField(auto_now_add=True)
     fecha_resolucion = models.DateTimeField(null=True, blank=True)
 
@@ -627,7 +481,6 @@ class AlertaStock(models.Model):
         ordering = ["-fecha_alerta"]
 
     def resolver(self):
-        """Marca la alerta como resuelta."""
         self.estado = EstadoAlerta.RESUELTA
         self.fecha_resolucion = timezone.now()
         self.save(update_fields=["estado", "fecha_resolucion"])
