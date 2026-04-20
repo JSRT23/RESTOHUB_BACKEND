@@ -215,7 +215,13 @@ class EmpleadoWriteSerializer(serializers.ModelSerializer):
 
 
 class TurnoListSerializer(serializers.ModelSerializer):
-    """Listado — sin exponer qr_token."""
+    """
+    Listado — ahora incluye qr_token y qr_expira_en para que el
+    supervisor pueda mostrar el QR desde la lista sin hacer un request
+    de detalle extra.
+
+    CAMBIO: Se agregaron qr_token y qr_expira_en (antes solo en TurnoSerializer).
+    """
     empleado_nombre = serializers.SerializerMethodField()
     estado_display = serializers.CharField(
         source="get_estado_display", read_only=True)
@@ -229,6 +235,8 @@ class TurnoListSerializer(serializers.ModelSerializer):
             "id", "empleado", "empleado_nombre",
             "restaurante_id", "fecha_inicio", "fecha_fin",
             "estado", "estado_display", "duracion_horas",
+            "qr_token", "qr_expira_en",   # ← AGREGADOS
+            "notas",
         ]
 
     def get_empleado_nombre(self, obj):
