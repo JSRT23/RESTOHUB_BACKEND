@@ -86,15 +86,12 @@ def _patch(path: str, data: dict) -> dict | None:
 # ─────────────────────────────────────────
 
 def _is_error(data) -> bool:
-    """True si la respuesta es un dict con _error=True."""
     return isinstance(data, dict) and data.get("_error") is True
 
 
 def _extract_error(data: dict, fallback: str) -> str:
-    """Extrae el mensaje de error más útil de una respuesta con _error."""
     if not data:
         return fallback
-    # Errores de validación DRF: {"field": ["msg"]}
     errores_campo = {
         k: v for k, v in data.items()
         if k not in ("_error", "status", "detail")
@@ -114,6 +111,10 @@ def _extract_error(data: dict, fallback: str) -> str:
 # ─────────────────────────────────────────
 
 def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
+    """
+    Para admin_central — sin restricción de scope.
+    Filtra libremente por pais, ciudad, alcance.
+    """
     params = {}
     if activo is not None:
         params["activo"] = activo
@@ -129,14 +130,33 @@ def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
     return result or []
 
 
-def get_proveedores_para_gerente(restaurante_id: str, pais: str = None,
-                                 ciudad: str = None, activo=None):
-    params = {"scope": "gerente"}
-    if restaurante_id:
-        params["restaurante_id"] = restaurante_id
+def get_proveedores_para_gerente(
+    restaurante_id: str,
+    pais: str = None,
+    ciudad: str = None,
+    activo=None,
+):
+    """
+    Para gerente_local — el inventory_service aplica el filtro OR:
+      GLOBAL
+      | PAIS(pais_destino == pais del restaurante)
+      | CIUDAD(ciudad_destino == ciudad del restaurante)
+      | LOCAL(creado_por_restaurante_id == restaurante_id)
+
+    Params que recibe el ProveedorViewSet:
+      scope=gerente
+      restaurante_id=UUID
+      pais_destino=str   ← nombre del país del restaurante (ej: "Argentina")
+      ciudad_destino=str ← nombre de la ciudad (ej: "Buenos Aires")
+    """
+    params = {
+        "scope": "gerente",
+        "restaurante_id": str(restaurante_id),
+    }
     if pais:
-        params["pais_destino"] = pais
+        params["pais_destino"] = pais        # ← nombre exacto, ej: "Argentina"
     if ciudad:
+        # ← nombre exacto, ej: "Buenos Aires"
         params["ciudad_destino"] = ciudad
     if activo is not None:
         params["activo"] = activo

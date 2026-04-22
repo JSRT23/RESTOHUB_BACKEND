@@ -138,14 +138,23 @@ class ProveedorViewSet(viewsets.ModelViewSet):
         if pais:
             qs = qs.filter(pais__icontains=pais)
 
-        # Filtro de visibilidad para gerente_local (Opción B)
+        # ── Filtro de visibilidad para gerente_local (Opción B) ──────────
+        # El gateway pasa scope=gerente + restaurante_id + pais_destino + ciudad_destino
+        # extraídos del JWT del gerente (o resueltos desde menu_service).
+        # Regla:
+        #   GLOBAL siempre visible
+        #   PAIS   visible si pais_destino del proveedor == pais_destino del gerente
+        #   CIUDAD visible si ciudad_destino del proveedor == ciudad_destino del gerente
+        #   LOCAL  visible si creado_por_restaurante_id == restaurante_id del gerente
         if scope == "gerente" and restaurante_id:
             from django.db.models import Q
             filtro = Q(alcance="GLOBAL")
             if pais_destino:
-                filtro |= Q(alcance="PAIS", pais_destino=pais_destino)
-            if ciudad_destino:
-                filtro |= Q(alcance="CIUDAD", ciudad_destino=ciudad_destino)
+                filtro |= Q(alcance="PAIS", pais_destino__iexact=pais_destino)
+                # CIUDAD también requiere pais_destino correcto
+                if ciudad_destino:
+                    filtro |= Q(alcance="CIUDAD",
+                                ciudad_destino__iexact=ciudad_destino)
             filtro |= Q(alcance="LOCAL",
                         creado_por_restaurante_id=restaurante_id)
             qs = qs.filter(filtro)

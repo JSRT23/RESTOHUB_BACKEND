@@ -14,12 +14,28 @@ from .models import (
 # ─────────────────────────────────────────
 
 class ProveedorSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo — incluye todos los campos de alcance (Opción B).
+    Usado para crear, editar y obtener detalle de un proveedor.
+    """
     class Meta:
         model = Proveedor
         fields = (
-            "id", "nombre", "pais", "ciudad",
-            "telefono", "email", "moneda_preferida",
-            "activo", "fecha_creacion", "fecha_actualizacion",
+            "id",
+            "nombre",
+            "pais",
+            "ciudad",
+            "telefono",
+            "email",
+            "moneda_preferida",
+            "activo",
+            # Campos de alcance (Opción B)
+            "alcance",
+            "pais_destino",
+            "ciudad_destino",
+            "creado_por_restaurante_id",
+            "fecha_creacion",
+            "fecha_actualizacion",
         )
         read_only_fields = ("id", "fecha_creacion", "fecha_actualizacion")
 
@@ -29,11 +45,51 @@ class ProveedorSerializer(serializers.ModelSerializer):
                 "El nombre no puede estar vacío.")
         return value.strip()
 
+    def validate(self, attrs):
+        alcance = attrs.get("alcance", getattr(
+            self.instance, "alcance", "GLOBAL"))
+        pais_destino = attrs.get("pais_destino", getattr(
+            self.instance, "pais_destino", None))
+        ciudad_destino = attrs.get("ciudad_destino", getattr(
+            self.instance, "ciudad_destino", None))
+        creado_por = attrs.get("creado_por_restaurante_id", getattr(
+            self.instance, "creado_por_restaurante_id", None))
+
+        if alcance == "PAIS" and not pais_destino:
+            raise serializers.ValidationError(
+                {"pais_destino": "Requerido para alcance PAIS."})
+        if alcance == "CIUDAD" and not ciudad_destino:
+            raise serializers.ValidationError(
+                {"ciudad_destino": "Requerido para alcance CIUDAD."})
+        if alcance == "LOCAL" and not creado_por:
+            raise serializers.ValidationError(
+                {"creado_por_restaurante_id": "Requerido para alcance LOCAL."})
+        return attrs
+
 
 class ProveedorListSerializer(serializers.ModelSerializer):
+    """
+    Serializer para listados — incluye campos de alcance y contacto completo.
+    El GET /proveedores/ devuelve todos estos campos para que el frontend
+    pueda mostrar teléfono, email, alcance, destinos, etc.
+    """
     class Meta:
         model = Proveedor
-        fields = ("id", "nombre", "pais", "moneda_preferida", "activo")
+        fields = (
+            "id",
+            "nombre",
+            "pais",
+            "ciudad",
+            "telefono",
+            "email",
+            "moneda_preferida",
+            "activo",
+            # Campos de alcance
+            "alcance",
+            "pais_destino",
+            "ciudad_destino",
+            "creado_por_restaurante_id",
+        )
         read_only_fields = ("id",)
 
 
@@ -81,12 +137,6 @@ class AlmacenWriteSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class RecetaPlatoSerializer(serializers.ModelSerializer):
-    """
-    nombre_ingrediente se resuelve desde IngredienteInventario local
-    vía context['ingredientes_cache'] — sin llamadas HTTP.
-
-    nombre_plato se omite — el gateway lo resuelve cruzando con menu_service.
-    """
     nombre_ingrediente = serializers.SerializerMethodField()
     costo_ingrediente = serializers.SerializerMethodField()
 
@@ -107,31 +157,24 @@ class RecetaPlatoSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_nombre_ingrediente(self, obj):
-        # 1. El campo del modelo ya tiene valor — caso normal
         if obj.nombre_ingrediente:
             return obj.nombre_ingrediente
-
-        # 2. Buscar en IngredienteInventario vía cache inyectado por el ViewSet
         ingredientes_cache = self.context.get("ingredientes_cache", {})
         nombre = ingredientes_cache.get(str(obj.ingrediente_id))
         if nombre:
             RecetaPlato.objects.filter(pk=obj.pk).update(
                 nombre_ingrediente=nombre)
             return nombre
-
-        # 3. Buscar en caché local de Ingrediente (tabla sincronizada vía RabbitMQ)
         try:
             from app.inventory.models import Ingrediente
             ing = Ingrediente.objects.filter(
-                ingrediente_id=obj.ingrediente_id
-            ).first()
+                ingrediente_id=obj.ingrediente_id).first()
             if ing:
                 RecetaPlato.objects.filter(pk=obj.pk).update(
                     nombre_ingrediente=ing.nombre)
                 return ing.nombre
         except Exception:
             pass
-
         return None
 
     def get_costo_ingrediente(self, obj):
@@ -153,10 +196,11 @@ class CostoPlatoSerializer(serializers.Serializer):
                 "Registra una orden de compra para actualizarlos."
             )
         return None
+
+
 # ─────────────────────────────────────────
 # MOVIMIENTO INVENTARIO — solo lectura
 # ─────────────────────────────────────────
-
 
 class MovimientoInventarioSerializer(serializers.ModelSerializer):
     class Meta:
@@ -175,7 +219,6 @@ class MovimientoInventarioSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class IngredienteInventarioSerializer(serializers.ModelSerializer):
-    """Lectura completa con propiedades calculadas y movimientos."""
     necesita_reposicion = serializers.BooleanField(read_only=True)
     esta_agotado = serializers.BooleanField(read_only=True)
     porcentaje_stock = serializers.FloatField(read_only=True)
@@ -200,7 +243,6 @@ class IngredienteInventarioSerializer(serializers.ModelSerializer):
 
 
 class IngredienteInventarioListSerializer(serializers.ModelSerializer):
-    """Lectura ligera para listados — sin movimientos."""
     necesita_reposicion = serializers.BooleanField(read_only=True)
     esta_agotado = serializers.BooleanField(read_only=True)
     porcentaje_stock = serializers.FloatField(read_only=True)
@@ -223,7 +265,6 @@ class IngredienteInventarioListSerializer(serializers.ModelSerializer):
 
 
 class IngredienteInventarioWriteSerializer(serializers.ModelSerializer):
-    """Para registrar un nuevo ingrediente en inventario."""
     class Meta:
         model = IngredienteInventario
         fields = (
@@ -236,20 +277,16 @@ class IngredienteInventarioWriteSerializer(serializers.ModelSerializer):
         nivel_min = attrs.get("nivel_minimo", 0)
         nivel_max = attrs.get("nivel_maximo", 0)
         cantidad = attrs.get("cantidad_actual", 0)
-
         if nivel_max < nivel_min:
             raise serializers.ValidationError(
-                {"nivel_maximo": "El nivel máximo debe ser mayor o igual al mínimo."}
-            )
+                {"nivel_maximo": "El nivel máximo debe ser mayor o igual al mínimo."})
         if cantidad < 0:
             raise serializers.ValidationError(
-                {"cantidad_actual": "La cantidad no puede ser negativa."}
-            )
+                {"cantidad_actual": "La cantidad no puede ser negativa."})
         return attrs
 
 
 class IngredienteInventarioNivelesSerializer(serializers.ModelSerializer):
-    """Solo para actualizar niveles mínimo y máximo."""
     class Meta:
         model = IngredienteInventario
         fields = ("nivel_minimo", "nivel_maximo")
@@ -259,23 +296,15 @@ class IngredienteInventarioNivelesSerializer(serializers.ModelSerializer):
         nivel_max = attrs.get("nivel_maximo", self.instance.nivel_maximo)
         if nivel_max < nivel_min:
             raise serializers.ValidationError(
-                {"nivel_maximo": "El nivel máximo debe ser mayor o igual al mínimo."}
-            )
+                {"nivel_maximo": "El nivel máximo debe ser mayor o igual al mínimo."})
         return attrs
 
 
 class AjusteStockSerializer(serializers.Serializer):
-    """
-    Ajuste manual de stock.
-    cantidad puede ser positiva (entrada) o negativa (corrección).
-    descripcion es obligatoria — toda corrección manual necesita justificación.
-    """
     cantidad = serializers.DecimalField(max_digits=10, decimal_places=3)
     descripcion = serializers.CharField(
         min_length=10,
-        error_messages={
-            "min_length": "La justificación debe tener al menos 10 caracteres."}
-    )
+        error_messages={"min_length": "La justificación debe tener al menos 10 caracteres."})
 
     def validate_cantidad(self, value):
         if value == 0:
@@ -289,7 +318,6 @@ class AjusteStockSerializer(serializers.Serializer):
 # ─────────────────────────────────────────
 
 class LoteIngredienteSerializer(serializers.ModelSerializer):
-    """Lectura completa con propiedades calculadas."""
     esta_vencido = serializers.BooleanField(read_only=True)
     dias_para_vencer = serializers.IntegerField(read_only=True)
     proveedor_nombre = serializers.CharField(
@@ -314,11 +342,6 @@ class LoteIngredienteSerializer(serializers.ModelSerializer):
 
 
 class LoteIngredienteWriteSerializer(serializers.ModelSerializer):
-    """
-    Para registrar un nuevo lote.
-    Al crear un lote se debe aumentar automáticamente el stock
-    del IngredienteInventario correspondiente en el ViewSet.
-    """
     class Meta:
         model = LoteIngrediente
         fields = (
@@ -330,15 +353,13 @@ class LoteIngredienteWriteSerializer(serializers.ModelSerializer):
     def validate_fecha_vencimiento(self, value):
         if value <= timezone.now().date():
             raise serializers.ValidationError(
-                "La fecha de vencimiento debe ser futura."
-            )
+                "La fecha de vencimiento debe ser futura.")
         return value
 
     def validate_cantidad_recibida(self, value):
         if value <= 0:
             raise serializers.ValidationError(
-                "La cantidad recibida debe ser mayor a 0."
-            )
+                "La cantidad recibida debe ser mayor a 0.")
         return value
 
     def validate(self, attrs):
@@ -346,18 +367,15 @@ class LoteIngredienteWriteSerializer(serializers.ModelSerializer):
         fecha_venc = attrs.get("fecha_vencimiento")
         if fecha_prod and fecha_venc and fecha_venc <= fecha_prod:
             raise serializers.ValidationError(
-                {"fecha_vencimiento": "Debe ser posterior a la fecha de producción."}
-            )
+                {"fecha_vencimiento": "Debe ser posterior a la fecha de producción."})
         return attrs
 
     def create(self, validated_data):
-        # cantidad_actual = cantidad_recibida al crear
         validated_data["cantidad_actual"] = validated_data["cantidad_recibida"]
         return super().create(validated_data)
 
 
 class LoteListSerializer(serializers.ModelSerializer):
-    """Lectura ligera para listados."""
     esta_vencido = serializers.BooleanField(read_only=True)
     dias_para_vencer = serializers.IntegerField(read_only=True)
     almacen_nombre = serializers.CharField(
@@ -415,7 +433,6 @@ class DetalleOrdenCompraWriteSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class OrdenCompraSerializer(serializers.ModelSerializer):
-    """Lectura completa con detalles anidados."""
     detalles = DetalleOrdenCompraSerializer(many=True, read_only=True)
     proveedor_nombre = serializers.CharField(
         source="proveedor.nombre", read_only=True)
@@ -433,7 +450,6 @@ class OrdenCompraSerializer(serializers.ModelSerializer):
 
 
 class OrdenCompraListSerializer(serializers.ModelSerializer):
-    """Lectura ligera para listados."""
     proveedor_nombre = serializers.CharField(
         source="proveedor.nombre", read_only=True)
 
@@ -447,10 +463,6 @@ class OrdenCompraListSerializer(serializers.ModelSerializer):
 
 
 class OrdenCompraWriteSerializer(serializers.ModelSerializer):
-    """
-    Creación atómica de orden con detalles.
-    Calcula total_estimado sumando subtotales de detalles.
-    """
     detalles = DetalleOrdenCompraWriteSerializer(many=True)
 
     class Meta:
@@ -463,20 +475,17 @@ class OrdenCompraWriteSerializer(serializers.ModelSerializer):
     def validate_detalles(self, value):
         if not value:
             raise serializers.ValidationError(
-                "La orden debe tener al menos un ítem."
-            )
+                "La orden debe tener al menos un ítem.")
         return value
 
     def validate_fecha_entrega_estimada(self, value):
         if value and value <= timezone.now():
             raise serializers.ValidationError(
-                "La fecha de entrega estimada debe ser futura."
-            )
+                "La fecha de entrega estimada debe ser futura.")
         return value
 
     def create(self, validated_data):
         detalles_data = validated_data.pop("detalles")
-
         total = Decimal("0.00")
 
         orden = OrdenCompra.objects.create(
@@ -488,37 +497,19 @@ class OrdenCompraWriteSerializer(serializers.ModelSerializer):
         for detalle_data in detalles_data:
             precio = Decimal(detalle_data["precio_unitario"])
             cantidad = Decimal(detalle_data["cantidad"])
-
-            # 🔥 CALCULO CORRECTO CON REDONDEO
-            subtotal = (precio * cantidad).quantize(
-                Decimal("0.01"),
-                rounding=ROUND_HALF_UP
-            )
-
+            subtotal = (precio * cantidad).quantize(Decimal("0.01"),
+                                                    rounding=ROUND_HALF_UP)
             DetalleOrdenCompra.objects.create(
-                orden=orden,
-                subtotal=subtotal,
-                **detalle_data
-            )
-
+                orden=orden, subtotal=subtotal, **detalle_data)
             total += subtotal
 
-        # 🔥 REDONDEAR TOTAL TAMBIÉN
         orden.total_estimado = total.quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
-        )
+            Decimal("0.01"), rounding=ROUND_HALF_UP)
         orden.save(update_fields=["total_estimado"])
-
         return orden
 
 
 class RecibirOrdenSerializer(serializers.Serializer):
-    """
-    Payload para recibir una orden de compra.
-    Por cada detalle se especifica la cantidad realmente recibida
-    y los datos del lote para trazabilidad sanitaria completa.
-    """
     class DetalleRecepcionSerializer(serializers.Serializer):
         detalle_id = serializers.UUIDField()
         cantidad_recibida = serializers.DecimalField(
@@ -537,8 +528,7 @@ class RecibirOrdenSerializer(serializers.Serializer):
         def validate_fecha_vencimiento(self, value):
             if value <= timezone.now().date():
                 raise serializers.ValidationError(
-                    "La fecha de vencimiento debe ser futura."
-                )
+                    "La fecha de vencimiento debe ser futura.")
             return value
 
     detalles = DetalleRecepcionSerializer(many=True)
@@ -547,8 +537,7 @@ class RecibirOrdenSerializer(serializers.Serializer):
     def validate_detalles(self, value):
         if not value:
             raise serializers.ValidationError(
-                "Debes especificar al menos un detalle de recepción."
-            )
+                "Debes especificar al menos un detalle de recepción.")
         return value
 
 
@@ -558,13 +547,9 @@ class RecibirOrdenSerializer(serializers.Serializer):
 
 class AlertaStockSerializer(serializers.ModelSerializer):
     nombre_ingrediente = serializers.CharField(
-        source="ingrediente_inventario.nombre_ingrediente",
-        read_only=True
-    )
+        source="ingrediente_inventario.nombre_ingrediente", read_only=True)
     almacen_nombre = serializers.CharField(
-        source="almacen.nombre",
-        read_only=True
-    )
+        source="almacen.nombre", read_only=True)
 
     class Meta:
         model = AlertaStock

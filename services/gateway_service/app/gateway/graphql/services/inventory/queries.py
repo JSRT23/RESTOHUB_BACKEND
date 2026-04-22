@@ -4,22 +4,13 @@ from .types import (
     ProveedorType, AlmacenType, StockType,
     LoteType, OrdenCompraType, AlertaStockType, RecetaPlatoType,
 )
-from ....client import inventory_client
+from ....client import inventory_client, menu_client
 from ....middleware.permissions import get_jwt_user
 
-
-# ─────────────────────────────────────────
-# HELPERS — retornamos dicts crudos
-# graphene los resuelve automáticamente con los campos del Type
-# Solo necesitamos resolve_* cuando el nombre del campo difiere del key
-# ─────────────────────────────────────────
 
 class InventoryQuery(graphene.ObjectType):
 
     # Proveedores
-    # - admin_central: ve todos (puede filtrar por pais/ciudad/alcance)
-    # - gerente_local: ve GLOBAL + PAIS(su país) + CIUDAD(su ciudad) + LOCAL(su restaurante)
-    # - supervisor y roles operativos: sin acceso
     proveedores = graphene.List(
         ProveedorType,
         activo=graphene.Boolean(),
@@ -54,7 +45,7 @@ class InventoryQuery(graphene.ObjectType):
     )
     stock_item = graphene.Field(StockType, id=graphene.ID(required=True))
     movimientos = graphene.List(
-        graphene.String,  # raw — el frontend normalmente no los lista
+        graphene.String,
         stock_id=graphene.ID(required=True),
     )
 
@@ -99,13 +90,12 @@ class InventoryQuery(graphene.ObjectType):
 
         admin_central  → ve todos; puede filtrar por pais/ciudad/alcance libremente.
         gerente_local  → ve solo los que aplican a su restaurante:
-                         alcance=GLOBAL
-                         OR (alcance=PAIS  AND pais_destino  == jwt.pais)
-                         OR (alcance=CIUDAD AND ciudad_destino == jwt.ciudad)
-                         OR (alcance=LOCAL AND creado_por_restaurante_id == jwt.restaurante_id)
-                         El frontend no necesita pasar filtros — el gateway los inyecta.
-        supervisor     → sin acceso (lista vacía).
-        otros roles    → sin acceso (lista vacía).
+                           alcance=GLOBAL
+                           OR (alcance=PAIS   AND pais_destino  == pais del restaurante)
+                           OR (alcance=CIUDAD AND ciudad_destino == ciudad del restaurante)
+                           OR (alcance=LOCAL  AND creado_por_restaurante_id == jwt.restaurante_id)
+                         El frontend NO pasa filtros — el gateway los inyecta automáticamente.
+        supervisor y roles operativos → lista vacía.
         """
         user = get_jwt_user(info)
         if not user:
@@ -113,8 +103,8 @@ class InventoryQuery(graphene.ObjectType):
 
         rol = user.get("rol")
 
+        # ── admin_central: sin restricción ───────────────────────────────
         if rol == "admin_central":
-            # Admin ve todo; respeta filtros manuales si los pasa
             params = {}
             if activo is not None:
                 params["activo"] = activo
@@ -126,15 +116,34 @@ class InventoryQuery(graphene.ObjectType):
                 params["alcance"] = alcance
             return inventory_client.get_proveedores(**params) or []
 
+        # ── gerente_local: filtro por scope ──────────────────────────────
         if rol == "gerente_local":
-            # El gerente no pasa filtros de scope — el gateway los inyecta
             restaurante_id = user.get("restaurante_id")
-            jwt_pais = user.get("pais")
-            jwt_ciudad = user.get("ciudad")
+            if not restaurante_id:
+                return []
+
+            # 1. Intentar leer pais y ciudad del JWT (si el auth_service los incluye)
+            pais_restaurante = user.get("pais")
+            ciudad_restaurante = user.get("ciudad")
+
+            # 2. Si no están en el JWT, resolver desde menu_service
+            #    (el restaurante tiene pais y ciudad en menu_service)
+            if not pais_restaurante or not ciudad_restaurante:
+                try:
+                    restaurante = menu_client.get_restaurante(restaurante_id)
+                    if restaurante:
+                        pais_restaurante = pais_restaurante or restaurante.get(
+                            "pais")
+                        ciudad_restaurante = ciudad_restaurante or restaurante.get(
+                            "ciudad")
+                except Exception:
+                    pass  # Si falla menu_service solo verá GLOBAL + LOCAL
+
+            # 3. Llamar a inventory con scope=gerente + pais + ciudad del restaurante
             return inventory_client.get_proveedores_para_gerente(
                 restaurante_id=restaurante_id,
-                pais=jwt_pais,
-                ciudad=jwt_ciudad,
+                pais=pais_restaurante,
+                ciudad=ciudad_restaurante,
                 activo=activo,
             ) or []
 
@@ -145,9 +154,7 @@ class InventoryQuery(graphene.ObjectType):
         user = get_jwt_user(info)
         if not user:
             return None
-        rol = user.get("rol")
-        # Solo admin y gerente pueden ver detalle de un proveedor
-        if rol not in ("admin_central", "gerente_local"):
+        if user.get("rol") not in ("admin_central", "gerente_local"):
             return None
         return inventory_client.get_proveedor(id)
 
@@ -156,7 +163,6 @@ class InventoryQuery(graphene.ObjectType):
         if not user:
             return []
         rol = user.get("rol")
-        # gerente y supervisor ven solo su restaurante
         if rol in ("gerente_local", "supervisor"):
             restaurante_id = user.get("restaurante_id")
         elif rol not in ("admin_central",):
@@ -198,7 +204,6 @@ class InventoryQuery(graphene.ObjectType):
         if not user:
             return []
         rol = user.get("rol")
-        # gerente solo ve órdenes de su restaurante
         if rol == "gerente_local":
             restaurante_id = user.get("restaurante_id")
         elif rol not in ("admin_central",):
@@ -217,7 +222,6 @@ class InventoryQuery(graphene.ObjectType):
         if not user:
             return []
         rol = user.get("rol")
-        # gerente y supervisor solo ven alertas de su restaurante
         if rol in ("gerente_local", "supervisor"):
             restaurante_id = user.get("restaurante_id")
         elif rol not in ("admin_central",):
