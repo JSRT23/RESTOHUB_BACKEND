@@ -20,6 +20,7 @@ class ComandaCocinaType(graphene.ObjectType):
     hora_envio = graphene.String()
     hora_fin = graphene.String()
     tiempo_preparacion_segundos = graphene.Float()
+    numero_dia = graphene.Int()
 
 
 class SeguimientoPedidoType(graphene.ObjectType):
@@ -51,6 +52,8 @@ class PedidoType(graphene.ObjectType):
     total = graphene.String()
     moneda = graphene.String()
     mesa_id = graphene.ID()
+    metodo_pago = graphene.String()
+    numero_dia = graphene.Int()
     fecha_creacion = graphene.String()
     fecha_entrega_estimada = graphene.String()
     detalles = graphene.List(DetallePedidoType)

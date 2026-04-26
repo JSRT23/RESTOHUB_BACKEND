@@ -48,10 +48,26 @@ def _post(path: str, data: dict = None) -> dict | None:
     except httpx.HTTPStatusError as e:
         logger.error("[order_client] HTTP error %s: %s",
                      e.response.status_code, path)
-        return None
+        # ── CAMBIO: propagar el error real del order_service ──────────────
+        try:
+            body = e.response.json()
+            detail = (
+                body.get("detail")
+                or body.get("error")
+                or body.get("message")
+                or "; ".join(
+                    f"{k}: {v[0] if isinstance(v, list) else v}"
+                    for k, v in body.items()
+                    if isinstance(v, (str, list)) and k not in ("status",)
+                )
+                or f"HTTP {e.response.status_code}"
+            )
+            return {"_error": True, "status": e.response.status_code, "detail": detail}
+        except Exception:
+            return {"_error": True, "status": e.response.status_code, "detail": str(e)}
     except httpx.RequestError as e:
         logger.error("[order_client] Request error: %s", e)
-        return None
+        return {"_error": True, "detail": str(e)}
 
 
 def _patch(path: str, data: dict) -> dict | None:
@@ -63,10 +79,15 @@ def _patch(path: str, data: dict) -> dict | None:
     except httpx.HTTPStatusError as e:
         logger.error("[order_client] HTTP error %s: %s",
                      e.response.status_code, path)
-        return None
+        try:
+            body = e.response.json()
+            detail = body.get("detail") or f"HTTP {e.response.status_code}"
+            return {"_error": True, "status": e.response.status_code, "detail": detail}
+        except Exception:
+            return {"_error": True, "status": e.response.status_code, "detail": str(e)}
     except httpx.RequestError as e:
         logger.error("[order_client] Request error: %s", e)
-        return None
+        return {"_error": True, "detail": str(e)}
 
 
 # ─────────────────────────────────────────
@@ -83,7 +104,11 @@ def get_pedidos(estado=None, canal=None, restaurante_id=None, cliente_id=None):
         params["restaurante_id"] = restaurante_id
     if cliente_id:
         params["cliente_id"] = cliente_id
-    return _get("/pedidos/", params=params) or []
+    data = _get("/pedidos/", params=params)
+    # order_service devuelve respuesta paginada: {"count": N, "results": [...]}
+    if isinstance(data, dict) and "results" in data:
+        return data["results"]
+    return data or []
 
 
 def get_pedido(id: str):
@@ -106,8 +131,11 @@ def marcar_listo(id: str, descripcion: str = ""):
     return _post(f"/pedidos/{id}/marcar_listo/", {"descripcion": descripcion})
 
 
-def entregar_pedido(id: str, descripcion: str = ""):
-    return _post(f"/pedidos/{id}/entregar/", {"descripcion": descripcion})
+def entregar_pedido(id: str, descripcion: str = "", metodo_pago: str = None):
+    payload = {"descripcion": descripcion}
+    if metodo_pago:
+        payload["metodo_pago"] = metodo_pago
+    return _post(f"/pedidos/{id}/entregar/", payload)
 
 
 def get_seguimiento(id: str):
@@ -134,7 +162,10 @@ def get_comandas(estado=None, estacion=None, pedido_id=None):
         params["estacion"] = estacion
     if pedido_id:
         params["pedido_id"] = pedido_id
-    return _get("/comandas/", params=params) or []
+    data = _get("/comandas/", params=params)
+    if isinstance(data, dict) and "results" in data:
+        return data["results"]
+    return data or []
 
 
 def get_comanda(id: str):
