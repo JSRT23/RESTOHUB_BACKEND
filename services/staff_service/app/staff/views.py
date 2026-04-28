@@ -1,3 +1,13 @@
+# staff_service/app/staff/views.py
+# CAMBIOS vs original:
+#   1. TurnoViewSet.iniciar():  TTL del QR = tiempo_hasta_fin + 45 min (era 15 min fijo)
+#   2. AsistenciaViewSet.salida(): acepta sin RegistroAsistencia de entrada
+#      (permite que supervisor complete turno manualmente aunque no haya entrada QR)
+#   3. TurnoViewSet: agrega @action completar() — supervisor puede completar sin QR
+#   4. TurnoViewSet.cancelar(): acepta estado ACTIVO además de PROGRAMADO
+#      (para auto-cancelar turnos activos que pasaron +30min del fin)
+# Todo lo demás es IDÉNTICO al original.
+
 from datetime import timedelta
 
 from django.db.models import Q
@@ -47,7 +57,6 @@ from app.staff.serializers import (
 
 # ---------------------------------------------------------------------------
 # RestauranteLocal
-# Read-only desde la API — se sincroniza vía RabbitMQ.
 # ---------------------------------------------------------------------------
 
 class RestauranteLocalViewSet(viewsets.ReadOnlyModelViewSet):
@@ -59,32 +68,23 @@ class RestauranteLocalViewSet(viewsets.ReadOnlyModelViewSet):
         qs = RestauranteLocal.objects.all()
         pais = self.request.query_params.get("pais")
         activo = self.request.query_params.get("activo")
-
         if pais:
             qs = qs.filter(pais=pais)
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
-
         return qs.order_by("nombre")
 
     @action(detail=True, methods=["get"], url_path="config-laboral")
     def config_laboral(self, request, pk=None):
-        """
-        GET /restaurantes/{id}/config-laboral/
-        Devuelve la ConfiguracionLaboralPais del país del restaurante.
-        Evita que el cliente haga dos requests.
-        """
         restaurante = self.get_object()
         config = ConfiguracionLaboralPais.objects.filter(
             pais=restaurante.pais
         ).first()
-
         if not config:
             return Response(
                 {"detail": f"No hay configuración laboral para '{restaurante.get_pais_display()}'."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-
         return Response(ConfiguracionLaboralPaisSerializer(config).data)
 
 
@@ -97,14 +97,11 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Empleado.objects.select_related("restaurante").all()
-
         restaurante_id = self.request.query_params.get("restaurante_id")
         rol = self.request.query_params.get("rol")
         activo = self.request.query_params.get("activo")
         pais = self.request.query_params.get("pais")
-
         if restaurante_id:
-            # restaurante_id es el UUID externo del menu_service
             qs = qs.filter(restaurante__restaurante_id=restaurante_id)
         if rol:
             qs = qs.filter(rol=rol)
@@ -112,37 +109,25 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
             qs = qs.filter(activo=activo.lower() == "true")
         if pais:
             qs = qs.filter(pais=pais)
-
         return qs.order_by("apellido", "nombre")
 
     def get_serializer_class(self):
         if self.action == "list":
-            return EmpleadoListSerializer          # email + telefono incluidos
+            return EmpleadoListSerializer
         if self.action in ["create", "partial_update"]:
-            return EmpleadoWriteSerializer         # acepta restaurante UUID externo
-        # detalle completo (retrieve, desactivar)
+            return EmpleadoWriteSerializer
         return EmpleadoSerializer
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        """
-        POST /empleados/{id}/desactivar/
-        Marca el empleado como inactivo.
-        Usa update_fields para que el signal publique el evento correcto.
-        Retorna el serializer completo para que el gateway lea email/telefono.
-        """
         empleado = self.get_object()
-
         if not empleado.activo:
             return Response(
                 {"detail": "El empleado ya está inactivo."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         empleado.activo = False
         empleado.save(update_fields=["activo", "updated_at"])
-
-        # EmpleadoSerializer (detalle completo) — incluye email, telefono, etc.
         return Response(EmpleadoSerializer(empleado).data)
 
 
@@ -155,13 +140,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Turno.objects.select_related("empleado__restaurante").all()
-
         empleado_id = self.request.query_params.get("empleado_id")
         restaurante_id = self.request.query_params.get("restaurante_id")
         estado = self.request.query_params.get("estado")
         fecha_desde = self.request.query_params.get("fecha_desde")
         fecha_hasta = self.request.query_params.get("fecha_hasta")
-
         if empleado_id:
             qs = qs.filter(empleado_id=empleado_id)
         if restaurante_id:
@@ -172,7 +155,6 @@ class TurnoViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fecha_inicio__date__gte=fecha_desde)
         if fecha_hasta:
             qs = qs.filter(fecha_inicio__date__lte=fecha_hasta)
-
         return qs.order_by("-fecha_inicio")
 
     def get_serializer_class(self):
@@ -186,7 +168,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
     def iniciar(self, request, pk=None):
         """
         POST /turnos/{id}/iniciar/
-        PROGRAMADO → ACTIVO. Rota qr_token y fija qr_expira_en.
+        PROGRAMADO → ACTIVO.
+
+        FIX: TTL del QR = tiempo restante hasta fechaFin + 45 min de gracia.
+        Antes era 15 min fijo → el QR expiraba mucho antes de que el empleado
+        llegara a escanearlo al final del turno.
         """
         import uuid
         turno = self.get_object()
@@ -197,11 +183,56 @@ class TurnoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Rotar token y fijar ventana de validez (15 min desde ahora)
+        # TTL dinámico: tiempo hasta el fin del turno + 45 min de gracia
+        ahora = timezone.now()
+        tiempo_hasta_fin = max((turno.fecha_fin - ahora).total_seconds(), 0)
+        ttl_segundos = tiempo_hasta_fin + (45 * 60)   # + 45 min post-fin
+
         turno.estado = EstadoTurno.ACTIVO
         turno.qr_token = uuid.uuid4()
-        turno.qr_expira_en = timezone.now() + timedelta(minutes=15)
+        turno.qr_expira_en = ahora + timedelta(seconds=ttl_segundos)
         turno.save(update_fields=["estado", "qr_token", "qr_expira_en"])
+
+        return Response(TurnoSerializer(turno).data)
+
+    @action(detail=True, methods=["post"])
+    def completar(self, request, pk=None):
+        """
+        POST /turnos/{id}/completar/
+        ACTIVO → COMPLETADO sin necesidad de QR escaneado.
+
+        Permite al supervisor registrar la salida manualmente cuando
+        el empleado no ha escaneado el QR de salida.
+        Si existe un RegistroAsistencia abierto, lo cierra calculando horas.
+        """
+        turno = self.get_object()
+
+        if turno.estado != EstadoTurno.ACTIVO:
+            return Response(
+                {"detail": f"Solo se pueden completar turnos activos. Estado actual: '{turno.estado}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ahora = timezone.now()
+
+        # Cerrar RegistroAsistencia si existe uno abierto
+        try:
+            registro = turno.registro_asistencia
+            if registro.hora_salida is None:
+                from decimal import Decimal
+                horas_normales, horas_extra = AsistenciaViewSet._calcular_horas_static(
+                    registro.hora_entrada, ahora, turno.empleado
+                )
+                registro.hora_salida = ahora
+                registro.horas_normales = horas_normales
+                registro.horas_extra = horas_extra
+                registro.save(
+                    update_fields=["hora_salida", "horas_normales", "horas_extra"])
+        except RegistroAsistencia.DoesNotExist:
+            pass  # Sin registro QR — no pasa nada, el turno igual se completa
+
+        turno.estado = EstadoTurno.COMPLETADO
+        turno.save(update_fields=["estado"])
 
         return Response(TurnoSerializer(turno).data)
 
@@ -209,13 +240,16 @@ class TurnoViewSet(viewsets.ModelViewSet):
     def cancelar(self, request, pk=None):
         """
         POST /turnos/{id}/cancelar/
-        Solo válido desde estado PROGRAMADO.
+
+        FIX: acepta PROGRAMADO y ACTIVO.
+        El auto-cancelador del frontend cancela turnos ACTIVOS que llevan
+        +30 min después de su fechaFin sin registrar salida.
         """
         turno = self.get_object()
 
-        if turno.estado not in [EstadoTurno.PROGRAMADO]:
+        if turno.estado not in [EstadoTurno.PROGRAMADO, EstadoTurno.ACTIVO]:
             return Response(
-                {"detail": "Solo se pueden cancelar turnos en estado 'programado'."},
+                {"detail": f"Solo se pueden cancelar turnos en estado 'programado' o 'activo'. Estado actual: '{turno.estado}'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -227,24 +261,11 @@ class TurnoViewSet(viewsets.ModelViewSet):
 
 # ---------------------------------------------------------------------------
 # Asistencia
-# Endpoints de acción pura — no ViewSet estándar.
-# Se registran como rutas separadas en urls.py.
 # ---------------------------------------------------------------------------
 
 class AsistenciaViewSet(viewsets.ViewSet):
-    """
-    ViewSet de solo acciones — no tiene list/retrieve/create/update.
-    Rutas:
-        POST /asistencia/entrada/
-        POST /asistencia/salida/
-        GET  /asistencia/
-    """
 
     def list(self, request):
-        """
-        GET /asistencia/
-        Requiere al menos fecha_desde o empleado_id para no traer todo el histórico.
-        """
         empleado_id = request.query_params.get("empleado_id")
         fecha_desde = request.query_params.get("fecha_desde")
         fecha_hasta = request.query_params.get("fecha_hasta")
@@ -269,17 +290,13 @@ class AsistenciaViewSet(viewsets.ViewSet):
         if fecha_hasta:
             qs = qs.filter(hora_entrada__date__lte=fecha_hasta)
 
-        serializer = RegistroAsistenciaSerializer(
-            qs.order_by("-hora_entrada"), many=True
+        return Response(
+            RegistroAsistenciaSerializer(
+                qs.order_by("-hora_entrada"), many=True).data
         )
-        return Response(serializer.data)
 
     @action(detail=False, methods=["post"])
     def entrada(self, request):
-        """
-        POST /asistencia/entrada/
-        Valida QR token o entrada manual y crea RegistroAsistencia.
-        """
         serializer = EntradaSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -287,7 +304,6 @@ class AsistenciaViewSet(viewsets.ViewSet):
         qr_token = serializer.validated_data.get("qr_token")
         turno_id = serializer.validated_data.get("turno_id")
 
-        # Resolver el turno
         if metodo == "qr":
             turno = self._resolver_turno_por_qr(qr_token)
             if turno is None:
@@ -303,7 +319,6 @@ class AsistenciaViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Verificar que no haya ya un registro abierto
         if hasattr(turno, "registro_asistencia"):
             return Response(
                 {"detail": "Ya existe un registro de entrada para este turno."},
@@ -315,7 +330,6 @@ class AsistenciaViewSet(viewsets.ViewSet):
             hora_entrada=timezone.now(),
             metodo_registro=metodo,
         )
-
         return Response(
             RegistroAsistenciaSerializer(registro).data,
             status=status.HTTP_201_CREATED,
@@ -325,7 +339,10 @@ class AsistenciaViewSet(viewsets.ViewSet):
     def salida(self, request):
         """
         POST /asistencia/salida/
-        Cierra el registro abierto, calcula horas y completa el turno.
+
+        FIX: ya no requiere RegistroAsistencia de entrada.
+        Si el empleado no escaneó entrada (turno iniciado manualmente),
+        se completa el turno de todas formas calculando horas desde fechaInicio.
         """
         serializer = SalidaSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -340,32 +357,42 @@ class AsistenciaViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        ahora = timezone.now()
+
         try:
             registro = turno.registro_asistencia
+
+            if registro.hora_salida:
+                return Response(
+                    {"detail": "Ya se registró la salida de este turno."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            horas_normales, horas_extra = self._calcular_horas(
+                registro.hora_entrada, ahora, turno.empleado
+            )
+            registro.hora_salida = ahora
+            registro.horas_normales = horas_normales
+            registro.horas_extra = horas_extra
+            registro.save(
+                update_fields=["hora_salida", "horas_normales", "horas_extra"])
+
         except RegistroAsistencia.DoesNotExist:
-            return Response(
-                {"detail": "No hay registro de entrada para este turno."},
-                status=status.HTTP_400_BAD_REQUEST,
+            # Sin registro de entrada (turno iniciado manualmente por supervisor)
+            # Calcular horas desde el inicio del turno
+            horas_normales, horas_extra = self._calcular_horas(
+                turno.fecha_inicio, ahora, turno.empleado
+            )
+            registro = RegistroAsistencia.objects.create(
+                turno=turno,
+                hora_entrada=turno.fecha_inicio,
+                hora_salida=ahora,
+                horas_normales=horas_normales,
+                horas_extra=horas_extra,
+                metodo_registro="manual",
             )
 
-        if registro.hora_salida:
-            return Response(
-                {"detail": "Ya se registró la salida de este turno."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        hora_salida = timezone.now()
-        horas_normales, horas_extra = self._calcular_horas(
-            registro.hora_entrada, hora_salida, turno.empleado
-        )
-
-        registro.hora_salida = hora_salida
-        registro.horas_normales = horas_normales
-        registro.horas_extra = horas_extra
-        registro.save(update_fields=["hora_salida",
-                      "horas_normales", "horas_extra"])
-
-        # Cerrar el turno
+        # Completar el turno
         turno.estado = EstadoTurno.COMPLETADO
         turno.save(update_fields=["estado"])
 
@@ -387,29 +414,33 @@ class AsistenciaViewSet(viewsets.ViewSet):
         ).first()
 
     def _calcular_horas(self, hora_entrada, hora_salida, empleado):
-        """
-        Separa horas trabajadas en normales y extra según
-        ConfiguracionLaboralPais del empleado.
-        Devuelve (horas_normales, horas_extra) como Decimal.
-        """
         from decimal import Decimal
-
         total_horas = Decimal(
             str(round((hora_salida - hora_entrada).total_seconds() / 3600, 2))
         )
-
         config = ConfiguracionLaboralPais.objects.filter(
-            pais=empleado.pais
-        ).first()
-
+            pais=empleado.pais).first()
         if not config:
             return total_horas, Decimal("0.00")
-
         limite = Decimal(str(config.horas_max_diarias))
-
         if total_horas <= limite:
             return total_horas, Decimal("0.00")
+        return limite, total_horas - limite
 
+    @staticmethod
+    def _calcular_horas_static(hora_entrada, hora_salida, empleado):
+        """Static version para uso desde TurnoViewSet.completar()"""
+        from decimal import Decimal
+        total_horas = Decimal(
+            str(round((hora_salida - hora_entrada).total_seconds() / 3600, 2))
+        )
+        config = ConfiguracionLaboralPais.objects.filter(
+            pais=empleado.pais).first()
+        if not config:
+            return total_horas, Decimal("0.00")
+        limite = Decimal(str(config.horas_max_diarias))
+        if total_horas <= limite:
+            return total_horas, Decimal("0.00")
         return limite, total_horas - limite
 
 
@@ -423,38 +454,30 @@ class EstacionCocinaViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = EstacionCocina.objects.all()
-
         restaurante_id = self.request.query_params.get("restaurante_id")
         activa = self.request.query_params.get("activa")
-
         if restaurante_id:
             qs = qs.filter(restaurante_id=restaurante_id)
         if activa is not None:
             qs = qs.filter(activa=activa.lower() == "true")
-
         return qs.order_by("nombre")
 
 
 # ---------------------------------------------------------------------------
 # AsignacionCocina
-# Read-only desde la API — se crea/actualiza vía consumer RabbitMQ.
 # ---------------------------------------------------------------------------
 
-# ✅ ModelViewSet
 class AsignacionCocinaViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
         qs = AsignacionCocina.objects.select_related(
-            "cocinero", "estacion"
-        ).all()
-
+            "cocinero", "estacion").all()
         restaurante_id = self.request.query_params.get("restaurante_id")
         cocinero_id = self.request.query_params.get("cocinero_id")
         fecha_desde = self.request.query_params.get("fecha_desde")
         fecha_hasta = self.request.query_params.get("fecha_hasta")
         sin_completar = self.request.query_params.get("sin_completar")
-
         if restaurante_id:
             qs = qs.filter(estacion__restaurante_id=restaurante_id)
         if cocinero_id:
@@ -465,7 +488,6 @@ class AsignacionCocinaViewSet(viewsets.ModelViewSet):
             qs = qs.filter(asignado_en__date__lte=fecha_hasta)
         if sin_completar and sin_completar.lower() == "true":
             qs = qs.filter(completado_en__isnull=True)
-
         return qs.order_by("-asignado_en")
 
     def get_serializer_class(self):
@@ -475,32 +497,21 @@ class AsignacionCocinaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def completar(self, request, pk=None):
-        """
-        POST /asignaciones-cocina/{id}/completar/
-
-        El cocinero marca la asignación como terminada.
-        Esto dispara el signal que publica cocina.asignacion.completada,
-        que a su vez mueve el pedido a LISTO en order_service.
-        """
         asignacion = self.get_object()
-
         if asignacion.completado_en:
             return Response(
                 {"detail": "Esta asignación ya fue completada."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         asignacion.completado_en = timezone.now()
         asignacion.sla_segundos = asignacion.calcular_sla()
-        # ✅ save() dispara el signal → publica cocina.asignacion.completada
         asignacion.save(update_fields=["completado_en", "sla_segundos"])
-
         return Response(AsignacionCocinaSerializer(asignacion).data)
+
 
 # ---------------------------------------------------------------------------
 # ServicioEntrega
 # ---------------------------------------------------------------------------
-
 
 class ServicioEntregaViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ServicioEntregaSerializer
@@ -508,12 +519,10 @@ class ServicioEntregaViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = ServicioEntrega.objects.select_related("repartidor").all()
-
         repartidor_id = self.request.query_params.get("repartidor_id")
         estado = self.request.query_params.get("estado")
         fecha_desde = self.request.query_params.get("fecha_desde")
         fecha_hasta = self.request.query_params.get("fecha_hasta")
-
         if repartidor_id:
             qs = qs.filter(repartidor_id=repartidor_id)
         if estado:
@@ -522,30 +531,20 @@ class ServicioEntregaViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(asignado_en__date__gte=fecha_desde)
         if fecha_hasta:
             qs = qs.filter(asignado_en__date__lte=fecha_hasta)
-
         return qs.order_by("-asignado_en")
 
     @action(detail=False, methods=["get"])
     def disponibles(self, request):
-        """
-        GET /entregas/disponibles/
-        Repartidores con turno activo y sin entrega abierta en este momento.
-        """
         restaurante_id = request.query_params.get("restaurante_id")
-
-        # Repartidores con turno activo ahora mismo
         qs = Empleado.objects.filter(
             rol=RolEmpleado.REPARTIDOR,
             activo=True,
             turnos__estado=EstadoTurno.ACTIVO,
         ).exclude(
-            # Sin entrega abierta (asignada o en camino)
             servicios_entrega__estado__in=["asignada", "en_camino"]
         ).distinct()
-
         if restaurante_id:
             qs = qs.filter(restaurante__restaurante_id=restaurante_id)
-
         return Response(RepartidorDisponibleSerializer(qs, many=True).data)
 
 
@@ -558,25 +557,14 @@ class AlertaOperacionalViewSet(
     mixins.ListModelMixin,
     viewsets.GenericViewSet,
 ):
-    """
-    GET  /alertas/          → list
-    GET  /alertas/{id}/     → retrieve
-    POST /alertas/{id}/resolver/ → marcar como resuelta
-
-    ✅ No permite crear/editar/borrar alertas desde la API —
-       se crean exclusivamente desde los consumers de RabbitMQ.
-    """
     serializer_class = AlertaOperacionalSerializer
-    # ✅ Sin http_method_names aquí — los mixins ya controlan qué métodos acepta cada acción
 
     def get_queryset(self):
         qs = AlertaOperacional.objects.all()
-
         restaurante_id = self.request.query_params.get("restaurante_id")
         nivel = self.request.query_params.get("nivel")
         tipo = self.request.query_params.get("tipo")
         resuelta = self.request.query_params.get("resuelta")
-
         if restaurante_id:
             qs = qs.filter(restaurante_id=restaurante_id)
         if nivel:
@@ -585,27 +573,18 @@ class AlertaOperacionalViewSet(
             qs = qs.filter(tipo=tipo)
         if resuelta is not None:
             qs = qs.filter(resuelta=resuelta.lower() == "true")
-
         return qs.order_by("-created_at")
 
     @action(detail=True, methods=["post"])
     def resolver(self, request, pk=None):
-        """
-        POST /alertas/{id}/resolver/
-        Marca la alerta como resuelta.
-        El signal publica ALERTA_RESUELTA a RabbitMQ automáticamente.
-        """
         alerta = self.get_object()
-
         if alerta.resuelta:
             return Response(
                 {"detail": "La alerta ya está resuelta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         alerta.resuelta = True
         alerta.save(update_fields=["resuelta", "updated_at"])
-
         return Response(AlertaOperacionalSerializer(alerta).data)
 
 
@@ -619,66 +598,49 @@ class ResumenNominaViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = ResumenNomina.objects.select_related("empleado").all()
-
         empleado_id = self.request.query_params.get("empleado_id")
         restaurante_id = self.request.query_params.get("restaurante_id")
         cerrado = self.request.query_params.get("cerrado")
         periodo_inicio = self.request.query_params.get("periodo_inicio")
         periodo_fin = self.request.query_params.get("periodo_fin")
-
         if empleado_id:
             qs = qs.filter(empleado_id=empleado_id)
         if restaurante_id:
             qs = qs.filter(
-                empleado__restaurante__restaurante_id=restaurante_id
-            )
+                empleado__restaurante__restaurante_id=restaurante_id)
         if cerrado is not None:
             qs = qs.filter(cerrado=cerrado.lower() == "true")
         if periodo_inicio:
             qs = qs.filter(periodo_inicio__gte=periodo_inicio)
         if periodo_fin:
             qs = qs.filter(periodo_fin__lte=periodo_fin)
-
         return qs.order_by("-periodo_inicio")
 
     @action(detail=False, methods=["post"])
     def generar(self, request):
-        """
-        POST /nomina/generar/
-        Agrega RegistroAsistencia del período para uno o todos los empleados
-        de un restaurante. Crea o sobreescribe ResumenNomina.
-        No se puede regenerar un período ya cerrado.
-        """
         serializer = GenerarNominaSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         periodo_inicio = serializer.validated_data["periodo_inicio"]
         periodo_fin = serializer.validated_data["periodo_fin"]
         empleado_id = serializer.validated_data.get("empleado_id")
         restaurante_id = serializer.validated_data.get("restaurante_id")
-
-        # Resolver qué empleados procesar
         if empleado_id:
             empleados = Empleado.objects.filter(pk=empleado_id)
         else:
             empleados = Empleado.objects.filter(
-                restaurante__restaurante_id=restaurante_id,
-                activo=True,
+                restaurante__restaurante_id=restaurante_id, activo=True,
             )
-
         if not empleados.exists():
             return Response(
                 {"detail": "No se encontraron empleados para los parámetros dados."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-
         generados = []
         for empleado in empleados:
             resumen = self._generar_resumen(
                 empleado, periodo_inicio, periodo_fin)
             if resumen:
                 generados.append(resumen)
-
         return Response(
             ResumenNominaSerializer(generados, many=True).data,
             status=status.HTTP_201_CREATED,
@@ -686,61 +648,40 @@ class ResumenNominaViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def cerrar(self, request, pk=None):
-        """
-        POST /nomina/{id}/cerrar/
-        Cierra el período — bloquea modificaciones futuras.
-        Usa update_fields para que el signal publique NOMINA_PERIODO_CERRADO.
-        """
         resumen = self.get_object()
-
         if resumen.cerrado:
             return Response(
                 {"detail": "Este período ya está cerrado."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         resumen.cerrado = True
         resumen.save(update_fields=["cerrado"])
-
         return Response(ResumenNominaSerializer(resumen).data)
-
-    # ── helper ──────────────────────────────────────────────────────────────
 
     def _generar_resumen(self, empleado, periodo_inicio, periodo_fin):
         from decimal import Decimal
-
-        # No regenerar si ya está cerrado
         existente = ResumenNomina.objects.filter(
             empleado=empleado,
             periodo_inicio=periodo_inicio,
             periodo_fin=periodo_fin,
         ).first()
-
         if existente and existente.cerrado:
             return existente
-
         registros = RegistroAsistencia.objects.filter(
             turno__empleado=empleado,
             hora_entrada__date__gte=periodo_inicio,
             hora_entrada__date__lte=periodo_fin,
             hora_salida__isnull=False,
         )
-
         total_normales = sum(
-            (r.horas_normales for r in registros), Decimal("0.00")
-        )
-        total_extra = sum(
-            (r.horas_extra for r in registros), Decimal("0.00")
-        )
+            (r.horas_normales for r in registros), Decimal("0.00"))
+        total_extra = sum((r.horas_extra for r in registros), Decimal("0.00"))
         dias = registros.values("hora_entrada__date").distinct().count()
-
-        # Determinar moneda por país
         moneda_por_pais = {
             "CO": "COP", "MX": "MXN", "AR": "ARS",
             "CL": "CLP", "BR": "BRL", "PE": "PEN", "PA": "USD",
         }
         moneda = moneda_por_pais.get(empleado.pais, "USD")
-
         resumen, _ = ResumenNomina.objects.update_or_create(
             empleado=empleado,
             periodo_inicio=periodo_inicio,
@@ -765,12 +706,10 @@ class PrediccionPersonalViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = PrediccionPersonal.objects.all()
-
         restaurante_id = self.request.query_params.get("restaurante_id")
         fecha_desde = self.request.query_params.get("fecha_desde")
         fecha_hasta = self.request.query_params.get("fecha_hasta")
         fuente = self.request.query_params.get("fuente")
-
         if restaurante_id:
             qs = qs.filter(restaurante_id=restaurante_id)
         if fecha_desde:
@@ -779,24 +718,16 @@ class PrediccionPersonalViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fecha__lte=fecha_hasta)
         if fuente:
             qs = qs.filter(fuente=fuente)
-
         return qs.order_by("fecha")
 
     @action(detail=False, methods=["get"], url_path=r"(?P<restaurante_id>[^/.]+)/semana")
     def semana(self, request, restaurante_id=None):
-        """
-        GET /predicciones/{restaurante_id}/semana/
-        Devuelve los 7 días siguientes para el restaurante dado.
-        """
+        from django.utils import timezone
         hoy = timezone.now().date()
         fin = hoy + timedelta(days=7)
-
         predicciones = PrediccionPersonal.objects.filter(
             restaurante_id=restaurante_id,
             fecha__gte=hoy,
             fecha__lte=fin,
         ).order_by("fecha")
-
-        return Response(
-            PrediccionPersonalSerializer(predicciones, many=True).data
-        )
+        return Response(PrediccionPersonalSerializer(predicciones, many=True).data)

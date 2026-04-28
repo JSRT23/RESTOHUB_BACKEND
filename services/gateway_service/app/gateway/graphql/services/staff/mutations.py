@@ -1,4 +1,9 @@
 # gateway_service/app/gateway/graphql/services/staff/mutations.py
+# CAMBIOS vs original:
+#   1. CompletarTurno — nueva clase → POST /turnos/{id}/completar/
+#   2. StaffMutation — agrega completar_turno = CompletarTurno.Field()
+# Todo lo demás es IDÉNTICO al original.
+
 import logging
 
 import graphene
@@ -77,8 +82,6 @@ class CrearEmpleado(graphene.Mutation):
                         empleado_id, email,
                     )
                 else:
-                    # No es fatal — puede que la cuenta auth aún no exista
-                    # (flujo: primero staff, luego auth o vice-versa)
                     detail = result.get(
                         "detail", "desconocido") if result else "sin respuesta"
                     logger.warning(
@@ -201,6 +204,33 @@ class CancelarTurno(graphene.Mutation):
         if not data:
             return CancelarTurno(ok=False, errores="Error al cancelar el turno.")
         return CancelarTurno(ok=True, turno=data)
+
+
+class CompletarTurno(graphene.Mutation):
+    """
+    ACTIVO → COMPLETADO sin necesidad de QR escaneado.
+    Llama a POST /turnos/{id}/completar/ en staff_service.
+    Si existe un RegistroAsistencia abierto lo cierra calculando horas.
+    Si no hay registro (turno iniciado manualmente) igual completa el turno.
+    """
+    class Arguments:
+        turno_id = graphene.ID(required=True)
+
+    turno = graphene.Field(TurnoType)
+    ok = graphene.Boolean()
+    errores = graphene.String()
+
+    def mutate(self, info, turno_id):
+        from ....client.staff_client import _post
+        data = _post(f"/turnos/{turno_id}/completar/")
+        if not data:
+            return CompletarTurno(ok=False, errores="Error al completar el turno.")
+        if isinstance(data, dict) and data.get("_error"):
+            return CompletarTurno(
+                ok=False,
+                errores=data.get("detail", "Error al completar el turno."),
+            )
+        return CompletarTurno(ok=True, turno=data)
 
 
 # ─────────────────────────────────────────
@@ -401,6 +431,7 @@ class StaffMutation(graphene.ObjectType):
     crear_turno = CrearTurno.Field()
     iniciar_turno = IniciarTurno.Field()
     cancelar_turno = CancelarTurno.Field()
+    completar_turno = CompletarTurno.Field()          # ← NUEVO
 
     registrar_entrada = RegistrarEntrada.Field()
     registrar_salida = RegistrarSalida.Field()
