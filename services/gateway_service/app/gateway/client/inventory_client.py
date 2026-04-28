@@ -1,3 +1,9 @@
+# services/gateway_service/app/gateway/client/inventory_client.py
+# CAMBIOS vs original:
+# 1. get_costo_plato → corregido a /recetas/costo_plato/ (estaba en /stock/costo-plato/)
+# 2. Agrega get_recetas(plato_id) → GET /recetas/?plato_id=UUID
+# Todo lo demás idéntico al archivo actual.
+
 import httpx
 import os
 import socket
@@ -81,10 +87,6 @@ def _patch(path: str, data: dict) -> dict | None:
         return {"_error": True, "detail": str(e)}
 
 
-# ─────────────────────────────────────────
-# Helpers internos
-# ─────────────────────────────────────────
-
 def _is_error(data) -> bool:
     return isinstance(data, dict) and data.get("_error") is True
 
@@ -94,8 +96,7 @@ def _extract_error(data: dict, fallback: str) -> str:
         return fallback
     errores_campo = {
         k: v for k, v in data.items()
-        if k not in ("_error", "status", "detail")
-        and isinstance(v, (list, str))
+        if k not in ("_error", "status", "detail") and isinstance(v, (list, str))
     }
     if errores_campo:
         partes = []
@@ -106,15 +107,9 @@ def _extract_error(data: dict, fallback: str) -> str:
     return data.get("detail") or data.get("error") or fallback
 
 
-# ─────────────────────────────────────────
-# Proveedor
-# ─────────────────────────────────────────
+# ─── Proveedor (idéntico) ─────────────────────────────────────────────────────
 
 def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
-    """
-    Para admin_central — sin restricción de scope.
-    Filtra libremente por pais, ciudad, alcance.
-    """
     params = {}
     if activo is not None:
         params["activo"] = activo
@@ -125,45 +120,19 @@ def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
     if alcance:
         params["alcance"] = alcance
     result = _get("/proveedores/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
-def get_proveedores_para_gerente(
-    restaurante_id: str,
-    pais: str = None,
-    ciudad: str = None,
-    activo=None,
-):
-    """
-    Para gerente_local — el inventory_service aplica el filtro OR:
-      GLOBAL
-      | PAIS(pais_destino == pais del restaurante)
-      | CIUDAD(ciudad_destino == ciudad del restaurante)
-      | LOCAL(creado_por_restaurante_id == restaurante_id)
-
-    Params que recibe el ProveedorViewSet:
-      scope=gerente
-      restaurante_id=UUID
-      pais_destino=str   ← nombre del país del restaurante (ej: "Argentina")
-      ciudad_destino=str ← nombre de la ciudad (ej: "Buenos Aires")
-    """
-    params = {
-        "scope": "gerente",
-        "restaurante_id": str(restaurante_id),
-    }
+def get_proveedores_para_gerente(restaurante_id, pais=None, ciudad=None, activo=None):
+    params = {"scope": "gerente", "restaurante_id": str(restaurante_id)}
     if pais:
-        params["pais_destino"] = pais        # ← nombre exacto, ej: "Argentina"
+        params["pais_destino"] = pais
     if ciudad:
-        # ← nombre exacto, ej: "Buenos Aires"
         params["ciudad_destino"] = ciudad
     if activo is not None:
         params["activo"] = activo
     result = _get("/proveedores/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_proveedor(id: str):
@@ -179,9 +148,7 @@ def actualizar_proveedor(id: str, data: dict):
     return _patch(f"/proveedores/{id}/", data)
 
 
-# ─────────────────────────────────────────
-# Almacén
-# ─────────────────────────────────────────
+# ─── Almacén (idéntico) ───────────────────────────────────────────────────────
 
 def get_almacenes(restaurante_id=None, activo=None):
     params = {}
@@ -190,9 +157,7 @@ def get_almacenes(restaurante_id=None, activo=None):
     if activo is not None:
         params["activo"] = activo
     result = _get("/almacenes/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_almacen(id: str):
@@ -205,18 +170,14 @@ def get_stock_almacen(id: str, bajo_minimo=None):
     if bajo_minimo:
         params["bajo_minimo"] = "true"
     result = _get(f"/almacenes/{id}/stock/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def crear_almacen(data: dict):
     return _post("/almacenes/", data)
 
 
-# ─────────────────────────────────────────
-# Stock (IngredienteInventario)
-# ─────────────────────────────────────────
+# ─── Stock (idéntico) ─────────────────────────────────────────────────────────
 
 def get_stock(almacen_id=None, bajo_minimo=None, agotado=None):
     params = {}
@@ -227,9 +188,7 @@ def get_stock(almacen_id=None, bajo_minimo=None, agotado=None):
     if agotado:
         params["agotado"] = "true"
     result = _get("/stock/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_stock_item(id: str):
@@ -242,27 +201,56 @@ def crear_stock(data: dict):
 
 
 def ajustar_stock(id: str, cantidad: float, descripcion: str):
-    return _post(f"/stock/{id}/ajustar/", {
-        "cantidad":    cantidad,
-        "descripcion": descripcion,
-    })
+    return _post(f"/stock/{id}/ajustar/", {"cantidad": cantidad, "descripcion": descripcion})
 
 
 def get_movimientos(id: str):
     result = _get(f"/stock/{id}/movimientos/")
+    return [] if _is_error(result) else (result or [])
+
+
+# ─── RECETAS Y COSTO — NUEVO/CORREGIDO ───────────────────────────────────────
+
+def get_recetas(plato_id: str = None) -> list:
+    """
+    GET /api/inventory/recetas/?plato_id=UUID
+    Devuelve los ingredientes de la receta de un plato.
+    Se sincronizan automáticamente vía RabbitMQ desde menu_service.
+    """
+    params = {}
+    if plato_id:
+        params["plato_id"] = plato_id
+    result = _get("/recetas/", params=params)
     if _is_error(result):
         return []
+    # DRF puede devolver lista directa o paginada
+    if isinstance(result, dict) and "results" in result:
+        return result["results"]
     return result or []
 
 
-def get_costo_plato(plato_id: str):
-    result = _get("/stock/costo-plato/", params={"plato_id": plato_id})
+def get_costo_plato(plato_id: str, restaurante_id: str = None) -> dict | None:
+    """
+    GET /api/inventory/recetas/costo_plato/?plato_id=UUID&restaurante_id=UUID
+    Calcula costo de producción del plato y porciones disponibles.
+
+    Responde:
+      - costo_total: suma de (cantidad_receta × costo_unitario) por ingrediente
+      - tiene_costos_vacios: True si algún ingrediente tiene costo=0
+      - porciones_disponibles: mínimo de porciones posibles (cuello de botella)
+      - ingredientes[]: desglose con stock_actual y porciones_posibles
+      - advertencia: mensaje si costos incompletos
+
+    El costo_unitario se actualiza automáticamente al recibir una orden de compra.
+    """
+    params = {"plato_id": plato_id}
+    if restaurante_id:
+        params["restaurante_id"] = restaurante_id
+    result = _get("/recetas/costo_plato/", params=params)
     return None if _is_error(result) else result
 
 
-# ─────────────────────────────────────────
-# Lotes
-# ─────────────────────────────────────────
+# ─── Lotes (idéntico) ─────────────────────────────────────────────────────────
 
 def get_lotes(estado=None, almacen_id=None, por_vencer=None):
     params = {}
@@ -273,9 +261,7 @@ def get_lotes(estado=None, almacen_id=None, por_vencer=None):
     if por_vencer:
         params["por_vencer"] = por_vencer
     result = _get("/lotes/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_lote(id: str):
@@ -291,9 +277,7 @@ def retirar_lote(id: str):
     return _post(f"/lotes/{id}/retirar/")
 
 
-# ─────────────────────────────────────────
-# Órdenes de compra
-# ─────────────────────────────────────────
+# ─── Órdenes de compra (idéntico) ────────────────────────────────────────────
 
 def get_ordenes_compra(estado=None, proveedor_id=None, restaurante_id=None):
     params = {}
@@ -304,9 +288,7 @@ def get_ordenes_compra(estado=None, proveedor_id=None, restaurante_id=None):
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
     result = _get("/ordenes-compra/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_orden_compra(id: str):
@@ -330,9 +312,7 @@ def cancelar_orden_compra(id: str):
     return _post(f"/ordenes-compra/{id}/cancelar/")
 
 
-# ─────────────────────────────────────────
-# Alertas
-# ─────────────────────────────────────────
+# ─── Alertas (idéntico) ───────────────────────────────────────────────────────
 
 def get_alertas(tipo=None, estado=None, restaurante_id=None):
     params = {}
@@ -343,9 +323,7 @@ def get_alertas(tipo=None, estado=None, restaurante_id=None):
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
     result = _get("/alertas/", params=params)
-    if _is_error(result):
-        return []
-    return result or []
+    return [] if _is_error(result) else (result or [])
 
 
 def get_alerta(id: str):

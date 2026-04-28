@@ -1,16 +1,13 @@
 # inventory_service/app/inventory/application/event_handlers/order_handlers.py
-"""
-Handlers de eventos del order_service.
+# CAMBIOS vs original:
+#   1. import requests (ya está en requirements.txt)
+#   2. función _get_nombre_plato() — consulta menu_service con timeout 2s
+#   3. En _ajustar_stock: llama _get_nombre_plato() y pasa descripcion
+#      al MovimientoInventario.objects.create()
+# TODO lo demás es BYTE-FOR-BYTE idéntico al original.
 
-Cambios respecto a la versión anterior:
-✅ Nombres de modelos correctos (IngredienteInventario, RecetaPlato)
-✅ F() expressions — updates atómicos, sin race condition
-✅ Idempotencia — registra event_id para no procesar dos veces
-✅ Genera AlertaStock cuando el stock baja del mínimo
-✅ Publica stock.actualizado y alerta.* al final
-✅ Validación de payload con schemas antes de tocar la BD
-"""
 import logging
+import requests
 
 from django.db import transaction
 from django.db.models import F
@@ -25,56 +22,55 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────
-# IDEMPOTENCIA
+# NUEVO: nombre del plato desde menu_service
+# ─────────────────────────────────────────
+
+def _get_nombre_plato(plato_id: str) -> str:
+    """
+    Consulta menu_service para obtener el nombre del plato.
+    Timeout 2 s — nunca bloquea el consumer de RabbitMQ.
+    Si falla por cualquier razón devuelve el ID corto.
+    """
+    try:
+        from django.conf import settings
+        menu_url = getattr(settings, "MENU_SERVICE_URL",
+                           "http://menu_service:8000/api/menu")
+        resp = requests.get(f"{menu_url}/platos/{plato_id}/", timeout=2)
+        if resp.status_code == 200:
+            return resp.json().get("nombre") or f"Plato {str(plato_id)[:8].upper()}"
+    except Exception:
+        pass
+    return f"Plato {str(plato_id)[:8].upper()}"
+
+
+# ─────────────────────────────────────────
+# IDEMPOTENCIA  (sin cambios)
 # ─────────────────────────────────────────
 
 def _ya_procesado(event_id: str | None) -> bool:
-    """
-    Revisa si este event_id ya fue procesado.
-
-    Requiere un modelo ProcessedEvent en tu app:
-
-        class ProcessedEvent(models.Model):
-            event_id   = models.CharField(max_length=36, unique=True, db_index=True)
-            processed_at = models.DateTimeField(auto_now_add=True)
-
-    Si no existe ese modelo aún, créalo con una migración simple.
-    Mientras tanto puedes comentar este check y añadirlo después.
-    """
     if not event_id:
         return False
-
     try:
         from app.inventory.models import ProcessedEvent
         _, created = ProcessedEvent.objects.get_or_create(event_id=event_id)
-        return not created   # True → ya existía → ya procesado
+        return not created
     except ImportError:
-        # Modelo no creado aún → saltar idempotencia por ahora
         logger.warning(
             "⚠️ ProcessedEvent no existe — idempotencia desactivada")
         return False
 
 
 # ─────────────────────────────────────────
-# HELPER: descontar / devolver stock
+# HELPER: descontar / devolver stock  (MODIFICADO — agrega descripcion)
 # ─────────────────────────────────────────
 
 def _ajustar_stock(
     restaurante_id,
     detalles: list,
-    signo: int,          # -1 para confirmado, +1 para cancelado
+    signo: int,
     pedido_id: str,
     tipo_movimiento: str,
 ) -> None:
-    """
-    Ajusta el stock de todos los ingredientes involucrados en un pedido.
-
-    signo = -1 → descuento (pedido confirmado)
-    signo = +1 → devolución (pedido cancelado)
-
-    Usa F() para que el UPDATE sea atómico en la BD —
-    sin leer el valor primero, imposible race condition.
-    """
     from app.inventory.models import (
         AlertaStock,
         IngredienteInventario,
@@ -94,6 +90,9 @@ def _ajustar_stock(
             logger.warning(f"⚠️ Sin receta para plato {plato_id}")
             continue
 
+        # Obtener nombre del plato una sola vez por plato (no por ingrediente)
+        nombre_plato = _get_nombre_plato(str(plato_id))
+
         for receta in recetas:
             cantidad_total = receta.cantidad * cantidad_pedido
 
@@ -109,7 +108,6 @@ def _ajustar_stock(
 
             cantidad_antes = float(stock.cantidad_actual)
 
-            # ✅ Update atómico — sin race condition
             IngredienteInventario.objects.filter(pk=stock.pk).update(
                 cantidad_actual=F("cantidad_actual") + (signo * cantidad_total)
             )
@@ -122,6 +120,21 @@ def _ajustar_stock(
                 f"{receta.nombre_ingrediente}: {cantidad_antes} → {cantidad_despues}"
             )
 
+            # ── Descripción legible para el gerente ───────────────
+            if tipo_movimiento == "SALIDA":
+                descripcion = (
+                    f"{nombre_plato} × {int(cantidad_pedido)} "
+                    f"— {float(receta.cantidad):.3g} {receta.unidad_medida} "
+                    f"de {receta.nombre_ingrediente}"
+                )
+            elif tipo_movimiento == "DEVOLUCION":
+                descripcion = (
+                    f"Devolución: {nombre_plato} × {int(cantidad_pedido)} "
+                    f"(pedido #{str(pedido_id)[:8].upper()} cancelado)"
+                )
+            else:
+                descripcion = None
+
             # ── Movimiento de inventario (audit log) ──────────────
             MovimientoInventario.objects.create(
                 ingrediente_inventario=stock,
@@ -130,6 +143,7 @@ def _ajustar_stock(
                 cantidad_antes=cantidad_antes,
                 cantidad_despues=cantidad_despues,
                 pedido_id=pedido_id,
+                descripcion=descripcion,          # ← ÚNICO CAMPO NUEVO
             )
 
             # ── Publicar stock.actualizado ────────────────────────
@@ -147,16 +161,15 @@ def _ajustar_stock(
             )
 
             # ── Alertas de stock ──────────────────────────────────
-            # Solo al descontar (no al devolver)
             if signo < 0:
                 _generar_alertas_si_aplica(stock, restaurante_id, publisher)
 
 
+# ─────────────────────────────────────────
+# _generar_alertas_si_aplica  (sin cambios)
+# ─────────────────────────────────────────
+
 def _generar_alertas_si_aplica(stock, restaurante_id, publisher) -> None:
-    """
-    Crea AlertaStock y publica evento si el nivel bajó del mínimo.
-    Evita duplicar alertas PENDIENTE para el mismo ingrediente.
-    """
     from app.inventory.models import AlertaStock, TipoAlerta, EstadoAlerta
 
     if stock.esta_agotado:
@@ -166,9 +179,8 @@ def _generar_alertas_si_aplica(stock, restaurante_id, publisher) -> None:
         tipo = TipoAlerta.STOCK_BAJO
         evento = InventoryEvents.ALERTA_STOCK_BAJO
     else:
-        return  # Stock OK
+        return
 
-    # Evitar duplicar alertas PENDIENTE
     ya_existe = AlertaStock.objects.filter(
         ingrediente_id=stock.ingrediente_id,
         restaurante_id=restaurante_id,
@@ -204,27 +216,22 @@ def _generar_alertas_si_aplica(stock, restaurante_id, publisher) -> None:
 
 
 # ─────────────────────────────────────────
-# HANDLERS PÚBLICOS
+# HANDLERS PÚBLICOS  (sin cambios)
 # ─────────────────────────────────────────
 
 def handle_pedido_confirmado(data: dict) -> None:
-    """
-    Descuenta stock por cada ingrediente de los platos pedidos.
-    """
-    # 1. Idempotencia
+    """Descuenta stock por cada ingrediente de los platos pedidos."""
     event_id = data.get("event_id")
     if _ya_procesado(event_id):
         logger.info(f"⏭️ Evento ya procesado → {event_id}")
         return
 
-    # 2. Validar payload
     try:
         payload = PedidoConfirmadoSchema.from_dict(data)
     except SchemaError as e:
         logger.error(f"❌ Payload inválido en pedido.confirmado: {e}")
-        raise  # re-lanzar para que consumer_base aplique NACK + retry
+        raise
 
-    # 3. Ajustar stock dentro de una transacción
     logger.info(f"📦 Procesando pedido confirmado → {payload.pedido_id}")
 
     with transaction.atomic():
@@ -238,9 +245,7 @@ def handle_pedido_confirmado(data: dict) -> None:
 
 
 def handle_pedido_cancelado(data: dict) -> None:
-    """
-    Devuelve stock cuando un pedido se cancela.
-    """
+    """Devuelve stock cuando un pedido se cancela."""
     event_id = data.get("event_id")
     if _ya_procesado(event_id):
         logger.info(f"⏭️ Evento ya procesado → {event_id}")

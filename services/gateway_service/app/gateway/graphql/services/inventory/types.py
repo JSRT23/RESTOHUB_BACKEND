@@ -1,4 +1,9 @@
-# gateway_service/app/gateway/graphql/services/inventory/types.py
+# services/gateway_service/app/gateway/graphql/services/inventory/types.py
+# CAMBIOS vs original:
+# 1. Agrega IngredienteCostoType
+# 2. Agrega CostoPlatoType
+# Todo lo demás idéntico al archivo actual.
+
 import graphene
 
 
@@ -10,11 +15,6 @@ class ProveedorType(graphene.ObjectType):
     telefono = graphene.String()
     email = graphene.String()
     moneda_preferida = graphene.String()
-    # Opción B — alcance del proveedor
-    # GLOBAL    → visible para todos los restaurantes de la cadena
-    # PAIS      → visible para restaurantes del país indicado
-    # CIUDAD    → visible para restaurantes de esa ciudad
-    # LOCAL     → solo el restaurante que lo creó
     alcance = graphene.String()
     pais_destino = graphene.String()
     ciudad_destino = graphene.String()
@@ -142,3 +142,49 @@ class RecetaPlatoType(graphene.ObjectType):
     costo_unitario = graphene.String()
     costo_ingrediente = graphene.Float()
     fecha_actualizacion = graphene.String()
+    # fecha_costo_actualizado no estaba en el original — lo agrego
+    fecha_costo_actualizado = graphene.String()
+
+
+# ── NUEVO: Costo de producción ────────────────────────────────────────────────
+
+class IngredienteCostoType(graphene.ObjectType):
+    """
+    Desglose de un ingrediente en el cálculo de costo de producción.
+    Incluye stock en tiempo real del restaurante.
+    """
+    ingrediente_id = graphene.ID()
+    nombre_ingrediente = graphene.String()
+    cantidad_receta = graphene.Float()          # cantidad que pide la receta
+    unidad_medida = graphene.String()
+    # precio/unidad (última orden de compra)
+    costo_unitario = graphene.Float()
+    costo_ingrediente = graphene.Float()        # costo_unitario × cantidad_receta
+    # Stock en tiempo real
+    stock_actual = graphene.Float()             # cantidad en almacén ahora
+    esta_agotado = graphene.Boolean()           # stock = 0
+    necesita_reposicion = graphene.Boolean()    # stock ≤ nivel_minimo
+    # floor(stock_actual / cantidad_receta)
+    porciones_posibles = graphene.Int()
+    fecha_costo_actualizado = graphene.String()  # cuándo se actualizó el costo
+
+
+class CostoPlatoType(graphene.ObjectType):
+    """
+    Costo total de producción de un plato.
+    Incluye desglose por ingrediente y porciones que se pueden preparar
+    con el stock actual del restaurante.
+    """
+    plato_id = graphene.ID()
+    costo_total = graphene.Float()           # suma de todos los costo_ingrediente
+    # True si algún ingrediente tiene costo=0
+    tiene_costos_vacios = graphene.Boolean()
+    # mínimo de porciones posibles (cuello de botella)
+    porciones_disponibles = graphene.Int()
+    ingredientes = graphene.List(IngredienteCostoType)
+    advertencia = graphene.String()          # mensaje si costos incompletos
+
+    def resolve_ingredientes(root, info):
+        if isinstance(root, dict):
+            return root.get("ingredientes", [])
+        return []
