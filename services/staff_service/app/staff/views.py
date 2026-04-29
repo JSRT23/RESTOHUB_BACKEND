@@ -363,10 +363,10 @@ class AsistenciaViewSet(viewsets.ViewSet):
             registro = turno.registro_asistencia
 
             if registro.hora_salida:
-                return Response(
-                    {"detail": "Ya se registró la salida de este turno."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                # Idempotente: si ya se registró la salida, devolver el registro
+                # sin error — el empleado puede escanear sin importar si el supervisor
+                # ya lo completó manualmente
+                return Response(RegistroAsistenciaSerializer(registro).data)
 
             horas_normales, horas_extra = self._calcular_horas(
                 registro.hora_entrada, ahora, turno.empleado

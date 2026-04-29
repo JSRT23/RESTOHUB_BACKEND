@@ -1,16 +1,16 @@
 # services/gateway_service/app/gateway/graphql/services/inventory/queries.py
-# CAMBIOS vs original:
-# 1. Importa CostoPlatoType desde types
-# 2. Agrega campo costoPlato en InventoryQuery
-# 3. Agrega resolve_costo_plato
-# 4. Corrige resolve_recetas: usaba _get() directo, ahora usa inventory_client.get_recetas()
-# Todo lo demás idéntico al archivo actual.
+# CAMBIOS vs original (documento index 23):
+#   1. stock: agrega restaurante_id como argumento opcional
+#   2. resolve_stock: cuando llega restaurante_id sin almacen_id,
+#      resuelve el almacén internamente y filtra por él
+#      (permite que cocinero vea su stock sin acceso a GET_ALMACENES)
+# Todo lo demás es IDÉNTICO al original.
 
 import graphene
 from .types import (
     ProveedorType, AlmacenType, StockType,
     LoteType, OrdenCompraType, AlertaStockType,
-    RecetaPlatoType, CostoPlatoType,           # ← CostoPlatoType es nuevo
+    RecetaPlatoType, CostoPlatoType,
 )
 from ....client import inventory_client, menu_client
 from ....middleware.permissions import get_jwt_user
@@ -38,10 +38,13 @@ class InventoryQuery(graphene.ObjectType):
         bajo_minimo=graphene.Boolean(),
     )
 
-    # Stock
+    # Stock — restaurante_id permite que cocinero filtre sin necesitar almacen_id
     stock = graphene.List(
         StockType,
         almacen_id=graphene.ID(),
+        restaurante_id=graphene.ID(          # ← NUEVO
+            description="Filtra por restaurante. El gateway resuelve el almacén internamente."
+        ),
         bajo_minimo=graphene.Boolean(),
         agotado=graphene.Boolean(),
     )
@@ -75,7 +78,7 @@ class InventoryQuery(graphene.ObjectType):
     # Recetas (ingredientes de un plato)
     recetas = graphene.List(RecetaPlatoType, plato_id=graphene.ID())
 
-    # ── NUEVO: costo de producción ────────────────────────────────────────
+    # Costo de producción
     costo_plato = graphene.Field(
         CostoPlatoType,
         plato_id=graphene.ID(required=True),
@@ -144,7 +147,24 @@ class InventoryQuery(graphene.ObjectType):
     def resolve_stock_almacen(self, info, almacen_id, bajo_minimo=None):
         return inventory_client.get_stock_almacen(almacen_id, bajo_minimo=bajo_minimo) or []
 
-    def resolve_stock(self, info, almacen_id=None, bajo_minimo=None, agotado=None):
+    def resolve_stock(self, info, almacen_id=None, restaurante_id=None,
+                      bajo_minimo=None, agotado=None):
+        """
+        FIX: cuando se pasa restaurante_id sin almacen_id (caso cocinero),
+        el gateway resuelve el almacén del restaurante internamente.
+        El cocinero no tiene permiso a resolve_almacenes pero sí a resolve_stock.
+        """
+        # Si no hay almacen_id pero sí restaurante_id → resolver almacén internamente
+        if not almacen_id and restaurante_id:
+            try:
+                almacenes = inventory_client.get_almacenes(
+                    restaurante_id=restaurante_id, activo=True
+                )
+                if almacenes:
+                    almacen_id = almacenes[0].get("id")
+            except Exception:
+                pass  # Sin almacén → retorna lista vacía
+
         return inventory_client.get_stock(
             almacen_id=almacen_id, bajo_minimo=bajo_minimo, agotado=agotado
         ) or []
@@ -190,25 +210,14 @@ class InventoryQuery(graphene.ObjectType):
         ) or []
 
     def resolve_recetas(self, info, plato_id=None):
-        # CORREGIDO: antes usaba _get() directo, ahora usa inventory_client
         return inventory_client.get_recetas(plato_id=plato_id) or []
 
     def resolve_costo_plato(self, info, plato_id, restaurante_id=None):
-        """
-        Calcula el costo de producción del plato y las porciones
-        disponibles con el stock del restaurante.
-
-        Accesible por: gerente_local (usa su restaurante del JWT),
-        admin_central (puede pasar restaurante_id), cocinero (consulta).
-        """
         user = get_jwt_user(info)
         if not user:
             return None
-
-        # Si no se pasa restaurante_id, usar el del JWT
         if not restaurante_id and user.get("restaurante_id"):
             restaurante_id = user.get("restaurante_id")
-
         return inventory_client.get_costo_plato(
             plato_id=plato_id,
             restaurante_id=restaurante_id,
