@@ -1,4 +1,5 @@
 # menu_service/app/menu/views.py
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -150,6 +151,14 @@ class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
         return qs.order_by("nombre")
 
+    def create(self, request, *args, **kwargs):
+        write_serializer = self.get_serializer(data=request.data)
+        write_serializer.is_valid(raise_exception=True)
+        self.perform_create(write_serializer)
+        instance = write_serializer.instance
+        read_serializer = IngredienteSerializer(instance)
+        return Response(read_serializer.data, status=201)
+
     def perform_create(self, serializer):
         instance = serializer.save()
         self.publicar_evento(MenuEvents.INGREDIENTE_CREADO,
@@ -227,6 +236,14 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
         return qs.select_related("categoria", "restaurante").order_by("nombre")
 
+    def create(self, request, *args, **kwargs):
+        write_serializer = self.get_serializer(data=request.data)
+        write_serializer.is_valid(raise_exception=True)
+        self.perform_create(write_serializer)
+        instance = write_serializer.instance
+        read_serializer = PlatoSerializer(instance)
+        return Response(read_serializer.data, status=201)
+
     def perform_create(self, serializer):
         instance = serializer.save()
         self.publicar_evento(MenuEvents.PLATO_CREADO,
@@ -271,7 +288,13 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
         serializer = PlatoIngredienteWriteSerializer(data=request.data)
         if serializer.is_valid():
-            instance = serializer.save(plato=plato)
+            try:
+                instance = serializer.save(plato=plato)
+            except DjangoValidationError as exc:
+                # Captura unicidad (plato+ingrediente duplicado) lanzada por full_clean
+                errors = exc.message_dict if hasattr(exc, "message_dict") else {
+                    "non_field_errors": exc.messages}
+                return Response(errors, status=400)
             self.publicar_evento(
                 MenuEvents.PLATO_INGREDIENTE_AGREGADO,
                 MenuEventBuilder.plato_ingrediente_agregado(

@@ -38,7 +38,7 @@ class UsuarioManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError("El email es obligatorio.")
-        email = self.normalize_email(email)
+        email = self.normalize_email(email).lower()
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -140,14 +140,14 @@ class EmailVerificationCode(models.Model):
     codigo = models.CharField(max_length=6, default=_generar_codigo)
     intentos = models.PositiveSmallIntegerField(default=0)
     creado_at = models.DateTimeField(auto_now_add=True)
-    expira_at = models.DateTimeField()
+    expira_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         app_label = "auth_app"
         verbose_name = "Código de verificación de email"
 
     def save(self, *args, **kwargs):
-        if not self.pk and not self.expira_at:
+        if not self.expira_at:
             self.expira_at = timezone.now() + timedelta(minutes=10)
         super().save(*args, **kwargs)
 

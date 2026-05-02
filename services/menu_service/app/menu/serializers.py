@@ -49,6 +49,16 @@ class IngredienteWriteSerializer(serializers.ModelSerializer):
                   "unidad_medida", "descripcion")
         read_only_fields = ("id",)
 
+    def get_validators(self):
+        # El UniqueTogetherValidator generado automáticamente fuerza 'restaurante'
+        # como requerido. Lo removemos y dejamos que el modelo maneje la unicidad.
+        from rest_framework.validators import UniqueTogetherValidator
+        return [
+            v for v in super().get_validators()
+            if not (isinstance(v, UniqueTogetherValidator)
+                    and "restaurante" in v.fields)
+        ]
+
     def validate_nombre(self, value):
         if not value.strip():
             raise serializers.ValidationError(

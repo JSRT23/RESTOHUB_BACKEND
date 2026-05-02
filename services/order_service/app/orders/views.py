@@ -161,7 +161,7 @@ class PedidoViewSet(viewsets.ModelViewSet):
         serializer = DetallePedidoWriteSerializer(data=request.data)
         if serializer.is_valid():
             detalle = serializer.save(pedido=pedido)
-            total = sum(d.subtotal for d in pedido.detalles.all())
+            total = sum(d.subtotal for d in pedido.detalles.all().iterator())
             pedido.total = total
             pedido.save(update_fields=["total"])
             return Response(

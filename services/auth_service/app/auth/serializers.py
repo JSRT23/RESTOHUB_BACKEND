@@ -24,6 +24,7 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Credenciales inválidas.")
         if not user.activo:
             raise serializers.ValidationError("Usuario desactivado.")
+        data.pop("password")
         data["usuario"] = user
         return data
 

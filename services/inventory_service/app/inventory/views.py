@@ -42,8 +42,10 @@ logger = logging.getLogger(__name__)
 
 def _crear_movimiento(inv, tipo, cantidad_signed, descripcion):
     cantidad_antes = float(inv.cantidad_actual)
+    cantidad_signed = Decimal(str(cantidad_signed))
     if tipo in ("SALIDA", "VENCIMIENTO"):
-        inv.cantidad_actual = max(inv.cantidad_actual + cantidad_signed, 0)
+        inv.cantidad_actual = max(
+            inv.cantidad_actual + cantidad_signed, Decimal("0"))
     else:
         inv.cantidad_actual = inv.cantidad_actual + cantidad_signed
     inv.save(update_fields=["cantidad_actual", "fecha_actualizacion"])
@@ -236,9 +238,9 @@ class LoteIngredienteViewSet(viewsets.ModelViewSet):
             defaults={
                 "nombre_ingrediente": f"Ingrediente {lote.ingrediente_id}",
                 "unidad_medida":      lote.unidad_medida,
-                "nivel_minimo":       10.0,   # ← FIX: mínimo operativo por defecto
-                "nivel_maximo":       200.0,  # ← FIX: máximo por defecto
-                "cantidad_actual":    0.0,
+                "nivel_minimo":       Decimal("10.000"),
+                "nivel_maximo":       Decimal("200.000"),
+                "cantidad_actual":    Decimal("0.000"),
             }
         )
         _crear_movimiento(
@@ -315,6 +317,14 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
         if self.action == "recibir":
             return RecibirOrdenSerializer
         return OrdenCompraSerializer
+
+    def create(self, request, *args, **kwargs):
+        write_serializer = OrdenCompraWriteSerializer(data=request.data)
+        write_serializer.is_valid(raise_exception=True)
+        orden = write_serializer.save()
+        read_serializer = OrdenCompraSerializer(
+            orden, context=self.get_serializer_context())
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
     def enviar(self, request, pk=None):
@@ -400,9 +410,9 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
                     defaults={
                         "nombre_ingrediente": detalle.nombre_ingrediente,
                         "unidad_medida":      detalle.unidad_medida,
-                        "nivel_minimo":       10.0,   # ← FIX
-                        "nivel_maximo":       200.0,  # ← FIX
-                        "cantidad_actual":    0.0,
+                        "nivel_minimo":       Decimal("10.000"),
+                        "nivel_maximo":       Decimal("200.000"),
+                        "cantidad_actual":    Decimal("0.000"),
                     }
                 )
                 inv.lote_actual = lote
