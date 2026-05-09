@@ -1,4 +1,9 @@
 # gateway_service/app/gateway/graphql/services/menu/mutations.py
+# CAMBIO v2:
+#   - CrearRestaurante: nuevo argumento `imagen` (opcional, default "").
+#   - ActualizarRestaurante: nuevo argumento `imagen` (opcional).
+#   - Todo lo demás sin cambios.
+
 import graphene
 from .types import (
     RestauranteType, CategoriaType, PlatoType,
@@ -17,12 +22,16 @@ class CrearRestaurante(graphene.Mutation):
         ciudad = graphene.String(required=True)
         direccion = graphene.String(required=True)
         moneda = graphene.String(required=True)
+        imagen = graphene.String(
+            description="URL de la foto del restaurante.")  # ← NUEVO
 
     ok = graphene.Boolean()
     restaurante = graphene.Field(RestauranteType)
     error = graphene.String()
 
-    def mutate(self, info, **kwargs):
+    def mutate(self, info, imagen=None, **kwargs):          # ← imagen opcional
+        if imagen is not None:
+            kwargs["imagen"] = imagen
         data = menu_client.crear_restaurante(kwargs)
         if not data:
             return CrearRestaurante(ok=False, error="Error al crear restaurante.")
@@ -37,6 +46,8 @@ class ActualizarRestaurante(graphene.Mutation):
         ciudad = graphene.String()
         direccion = graphene.String()
         moneda = graphene.String()
+        imagen = graphene.String(
+            description="URL de la foto del restaurante.")  # ← NUEVO
 
     ok = graphene.Boolean()
     restaurante = graphene.Field(RestauranteType)
@@ -67,7 +78,7 @@ class DesactivarRestaurante(graphene.Mutation):
         ok=bool(menu_client.desactivar_restaurante(id)))
 
 
-# ── Categoría (solo admin_central) ────────────────────────────────────────
+# ── Categoría ──────────────────────────────────────────────────────────────
 
 class CrearCategoria(graphene.Mutation):
     class Arguments:
@@ -207,10 +218,6 @@ class DesactivarIngrediente(graphene.Mutation):
 # ── Plato ──────────────────────────────────────────────────────────────────
 
 class CrearPlato(graphene.Mutation):
-    """
-    restaurante_id = null → plato global (admin_central)
-    restaurante_id = UUID → plato del restaurante (gerente)
-    """
     class Arguments:
         nombre = graphene.String(required=True)
         descripcion = graphene.String(required=True)
@@ -224,19 +231,13 @@ class CrearPlato(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, nombre, descripcion, categoria_id=None, imagen=None, restaurante_id=None):
-        # FIX: solo incluir campos opcionales si tienen valor — DRF rechaza null
-        # en FKs que no son nullable en el WriteSerializer.
-        payload = {
-            "nombre": nombre,
-            "descripcion": descripcion,
-        }
+        payload = {"nombre": nombre, "descripcion": descripcion}
         if categoria_id:
             payload["categoria"] = categoria_id
         if imagen:
             payload["imagen"] = imagen
         if restaurante_id:
             payload["restaurante"] = restaurante_id
-
         data = menu_client.crear_plato(payload)
         if not data:
             return CrearPlato(ok=False, error="Error al crear plato.")
@@ -332,16 +333,13 @@ class CrearPrecioPlato(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, plato_id, restaurante_id, precio, fecha_inicio, fecha_fin=None):
-        # FIX: garantizar que fecha_inicio llegue con hora para evitar rechazo
-        # por zona horaria. Si viene solo como "YYYY-MM-DD", añadir T12:00:00
-        # (mediodía UTC) para que sea válido en cualquier offset.
         if fecha_inicio and "T" not in fecha_inicio:
             fecha_inicio = f"{fecha_inicio}T12:00:00"
 
         payload = {
-            "plato": plato_id,
+            "plato":       plato_id,
             "restaurante": restaurante_id,
-            "precio": str(precio),
+            "precio":      str(precio),
             "fecha_inicio": fecha_inicio,
         }
         if fecha_fin:
@@ -376,25 +374,21 @@ class DesactivarPrecio(graphene.Mutation):
 # ── Registro ───────────────────────────────────────────────────────────────
 
 class MenuMutation(graphene.ObjectType):
-    # Restaurante
     crear_restaurante = CrearRestaurante.Field()
     actualizar_restaurante = ActualizarRestaurante.Field()
     activar_restaurante = ActivarRestaurante.Field()
     desactivar_restaurante = DesactivarRestaurante.Field()
 
-    # Categoría
     crear_categoria = CrearCategoria.Field()
     actualizar_categoria = ActualizarCategoria.Field()
     activar_categoria = ActivarCategoria.Field()
     desactivar_categoria = DesactivarCategoria.Field()
 
-    # Ingrediente
     crear_ingrediente = CrearIngrediente.Field()
     actualizar_ingrediente = ActualizarIngrediente.Field()
     activar_ingrediente = ActivarIngrediente.Field()
     desactivar_ingrediente = DesactivarIngrediente.Field()
 
-    # Plato
     crear_plato = CrearPlato.Field()
     actualizar_plato = ActualizarPlato.Field()
     activar_plato = ActivarPlato.Field()
@@ -402,7 +396,6 @@ class MenuMutation(graphene.ObjectType):
     agregar_ingrediente_plato = AgregarIngredientePlato.Field()
     quitar_ingrediente_plato = QuitarIngredientePlato.Field()
 
-    # Precio
     crear_precio_plato = CrearPrecioPlato.Field()
     activar_precio = ActivarPrecio.Field()
     desactivar_precio = DesactivarPrecio.Field()

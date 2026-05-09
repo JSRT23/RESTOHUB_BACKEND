@@ -1,4 +1,10 @@
 # menu_service/app/menu/serializers.py
+# CAMBIO v2:
+#   - RestauranteSerializer expone `imagen`
+#   - RestauranteWriteSerializer acepta `imagen` (opcional, valida URL)
+#   - MenuRestauranteSerializer expone `imagen` del restaurante
+#   - Todo lo demás sin cambios
+
 from rest_framework import serializers
 from django.utils import timezone
 from .models import Restaurante, Categoria, Plato, Ingrediente, PlatoIngrediente, PrecioPlato
@@ -9,9 +15,19 @@ class RestauranteSerializer(serializers.ModelSerializer):
         model = Restaurante
         fields = (
             "id", "nombre", "pais", "ciudad", "direccion",
-            "moneda", "activo", "fecha_creacion", "fecha_actualizacion",
+            "moneda", "activo",
+            "imagen",                          # ← NUEVO
+            "fecha_creacion", "fecha_actualizacion",
         )
         read_only_fields = ("id", "fecha_creacion", "fecha_actualizacion")
+
+    def validate_imagen(self, value):
+        """Acepta vacío; si viene URL debe ser http/https."""
+        if value and not value.startswith(("http://", "https://")):
+            raise serializers.ValidationError(
+                "La imagen debe ser una URL válida (http:// o https://)."
+            )
+        return value
 
 
 class CategoriaSerializer(serializers.ModelSerializer):
@@ -22,7 +38,6 @@ class CategoriaSerializer(serializers.ModelSerializer):
 
 
 class IngredienteSerializer(serializers.ModelSerializer):
-    # Expone el UUID del restaurante directamente
     restaurante_id = serializers.UUIDField(
         source="restaurante.id", read_only=True, allow_null=True)
 
@@ -34,7 +49,6 @@ class IngredienteSerializer(serializers.ModelSerializer):
 
 
 class IngredienteWriteSerializer(serializers.ModelSerializer):
-    """Para crear ingredientes — acepta restaurante (UUID del Restaurante)."""
     restaurante = serializers.PrimaryKeyRelatedField(
         queryset=Restaurante.objects.all(),
         required=False,
@@ -44,14 +58,11 @@ class IngredienteWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Ingrediente
-        # FIX: Agregado "id"
         fields = ("id", "restaurante", "nombre",
                   "unidad_medida", "descripcion")
         read_only_fields = ("id",)
 
     def get_validators(self):
-        # El UniqueTogetherValidator generado automáticamente fuerza 'restaurante'
-        # como requerido. Lo removemos y dejamos que el modelo maneje la unicidad.
         from rest_framework.validators import UniqueTogetherValidator
         return [
             v for v in super().get_validators()
@@ -82,7 +93,6 @@ class PlatoIngredienteSerializer(serializers.ModelSerializer):
 class PlatoIngredienteWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlatoIngrediente
-        # FIX: Agregado "id"
         fields = ("id", "ingrediente", "cantidad")
         read_only_fields = ("id",)
 
@@ -98,7 +108,6 @@ class PrecioPlatoSerializer(serializers.ModelSerializer):
     restaurante_nombre = serializers.CharField(
         source="restaurante.nombre", read_only=True)
     esta_vigente = serializers.BooleanField(read_only=True)
-    # Exponer plato_id y restaurante_id explícitos (el gateway los espera)
     plato_id = serializers.UUIDField(source="plato.id", read_only=True)
     restaurante_id = serializers.UUIDField(
         source="restaurante.id", read_only=True)
@@ -120,7 +129,6 @@ class PrecioPlatoSerializer(serializers.ModelSerializer):
 class PrecioPlatoWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrecioPlato
-        # FIX: Agregado "id"
         fields = ("id", "plato", "restaurante", "precio",
                   "fecha_inicio", "fecha_fin", "activo")
         read_only_fields = ("id",)
@@ -187,7 +195,6 @@ class PlatoListSerializer(serializers.ModelSerializer):
 
 
 class PlatoWriteSerializer(serializers.ModelSerializer):
-    """Para crear/actualizar platos — acepta restaurante (UUID)."""
     restaurante = serializers.PrimaryKeyRelatedField(
         queryset=Restaurante.objects.all(),
         required=False,
@@ -197,7 +204,6 @@ class PlatoWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Plato
-        # FIX: Agregado "id"
         fields = ("id", "restaurante", "nombre", "descripcion",
                   "categoria", "imagen", "activo")
         read_only_fields = ("id",)
@@ -209,13 +215,13 @@ class PlatoWriteSerializer(serializers.ModelSerializer):
         return value.strip()
 
 
-# ── Menú público agrupado por categoría ──────────────────────────────────
+# ── Menú público agrupado por categoría ───────────────────────────────────
 
 class MenuPlatoSerializer(serializers.Serializer):
     plato_id = serializers.UUIDField(source="id")
     nombre = serializers.CharField()
     descripcion = serializers.CharField()
-    imagen = serializers.URLField()
+    imagen = serializers.URLField(allow_null=True, allow_blank=True)
     precio = serializers.SerializerMethodField()
     moneda = serializers.SerializerMethodField()
 
@@ -259,6 +265,7 @@ class MenuRestauranteSerializer(serializers.Serializer):
     ciudad = serializers.CharField()
     pais = serializers.CharField()
     moneda = serializers.CharField()
+    imagen = serializers.CharField(allow_blank=True, default="")  # ← NUEVO
     categorias = serializers.SerializerMethodField()
 
     def get_categorias(self, obj):

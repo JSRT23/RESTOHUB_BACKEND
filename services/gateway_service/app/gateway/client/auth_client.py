@@ -131,6 +131,25 @@ def vincular_empleado(email: str, empleado_id: str, token: str) -> dict:
     )
 
 
+def get_autenticado(path: str, params: dict = None, token: str = None):
+    """
+    GET autenticado — envía el Bearer token en el header Authorization.
+    Usado por las queries de clientes que requieren auth en auth_service.
+    """
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return _get(path, headers=headers, params=params)
+
+
+def get(path: str, params: dict = None, token: str = None):
+    """
+    GET público o autenticado según si se pasa token.
+    Alias conveniente para get_autenticado.
+    """
+    return get_autenticado(path, params=params, token=token)
+
+
 def get_usuarios(rol: str = None, activo: bool = None,
                  restaurante_id: str = None, token: str = None) -> list:
     """

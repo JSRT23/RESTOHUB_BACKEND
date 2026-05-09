@@ -1,4 +1,8 @@
 # menu_service/app/menu/views.py
+# CAMBIO v2: ningún cambio de lógica. El campo `imagen` entra automáticamente
+# porque RestauranteSerializer ya lo incluye. views.py no necesita cambios.
+# Se incluye completo para mantener coherencia con los eventos RabbitMQ.
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from rest_framework import viewsets, status
@@ -31,7 +35,7 @@ from .serializers import (
 
 class RestauranteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
     queryset = Restaurante.objects.all()
-    serializer_class = RestauranteSerializer
+    serializer_class = RestauranteSerializer          # expone imagen automáticamente
     http_method_names = ["get", "post", "patch", "head", "options"]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["activo", "pais"]
@@ -113,13 +117,6 @@ class CategoriaViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 # ── Ingrediente ────────────────────────────────────────────────────────────
 
 class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
-    """
-    Filtros disponibles:
-      ?activo=true/false
-      ?restaurante_id=UUID   → ingredientes de ese restaurante
-      ?global=true           → solo ingredientes globales (restaurante=null)
-      ?disponibles=UUID      → globales + del restaurante X (para el gerente)
-    """
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["activo", "unidad_medida"]
 
@@ -134,14 +131,12 @@ class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
         activo = self.request.query_params.get("activo")
         restaurante_id = self.request.query_params.get("restaurante_id")
         global_only = self.request.query_params.get("global")
-        disponibles = self.request.query_params.get(
-            "disponibles")  # globales + restaurante X
+        disponibles = self.request.query_params.get("disponibles")
 
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
 
         if disponibles:
-            # El gerente ve sus propios + los globales
             qs = qs.filter(Q(restaurante_id=disponibles)
                            | Q(restaurante__isnull=True))
         elif restaurante_id:
@@ -192,14 +187,6 @@ class IngredienteViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 # ── Plato ──────────────────────────────────────────────────────────────────
 
 class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
-    """
-    Filtros disponibles:
-      ?activo=true/false
-      ?categoria=UUID
-      ?restaurante_id=UUID   → platos de ese restaurante
-      ?global=true           → solo platos globales
-      ?disponibles=UUID      → globales + del restaurante X (para el gerente/menú)
-    """
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["activo", "categoria"]
 
@@ -221,12 +208,9 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
 
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
-
         if categoria:
             qs = qs.filter(categoria_id=categoria)
-
         if disponibles:
-            # Gerente ve sus platos + globales
             qs = qs.filter(Q(restaurante_id=disponibles)
                            | Q(restaurante__isnull=True))
         elif restaurante_id:
@@ -291,7 +275,6 @@ class PlatoViewSet(PublicadorEventoMixin, viewsets.ModelViewSet):
             try:
                 instance = serializer.save(plato=plato)
             except DjangoValidationError as exc:
-                # Captura unicidad (plato+ingrediente duplicado) lanzada por full_clean
                 errors = exc.message_dict if hasattr(exc, "message_dict") else {
                     "non_field_errors": exc.messages}
                 return Response(errors, status=400)

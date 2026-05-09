@@ -1,172 +1,196 @@
+# auth_service/app/auth/email_service.py
 import logging
-
-import resend
+import datetime
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-resend.api_key = settings.RESEND_API_KEY
-FROM_EMAIL = settings.RESEND_FROM_EMAIL
-APP_NAME = "RestoHub"
 
+def _resend():
+    try:
+        import resend
+        resend.api_key = settings.RESEND_API_KEY
+        return resend
+    except ImportError:
+        logger.error(
+            "[email] librería 'resend' no instalada: pip install resend")
+        return None
+
+
+def _from_email():
+    # Resend requiere formato "Nombre <email>" — sin nombre falla silenciosamente
+    return f"RestoHub <{getattr(settings, 'RESEND_FROM_EMAIL', 'onboarding@resend.dev')}>"
+
+
+def _reply_to():
+    return getattr(settings, "RESEND_REPLY_TO", "") or None
+
+
+# ── Templates ──────────────────────────────────────────────────────────────
+
+def _html_codigo(nombre: str, codigo: str) -> str:
+    year = datetime.date.today().year
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f5ec;font-family:Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
+  <tr><td align="center">
+    <table width="520" cellpadding="0" cellspacing="0"
+           style="background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
+      <tr>
+        <td style="background:#0a3828;padding:32px 40px;text-align:center;">
+          <p style="margin:0 0 4px;font-size:11px;color:rgba(255,250,202,.6);letter-spacing:.12em;text-transform:uppercase;">RestoHub</p>
+          <h1 style="margin:0;font-family:Georgia,serif;font-size:26px;font-weight:700;color:#fff;">Verifica tu correo</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:40px 40px 32px;">
+          <p style="margin:0 0 20px;font-size:15px;color:#52524a;line-height:1.6;">
+            Hola <strong style="color:#141410;">{nombre}</strong>,<br>
+            usa este código para activar tu cuenta. Expira en <strong>10 minutos</strong>.
+          </p>
+          <div style="background:#f5f5ec;border:2px dashed rgba(10,56,40,.2);border-radius:14px;padding:28px;text-align:center;margin:0 0 24px;">
+            <p style="margin:0 0 6px;font-size:11px;color:#909088;letter-spacing:.1em;text-transform:uppercase;">Código de verificación</p>
+            <p style="margin:0;font-family:monospace;font-size:42px;font-weight:800;color:#0a3828;letter-spacing:.18em;line-height:1;">{codigo}</p>
+          </div>
+          <p style="margin:0;font-size:13px;color:#909088;line-height:1.55;">
+            Si no creaste esta cuenta ignora este correo.<br>
+            Nunca compartas este código con nadie.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="background:#f5f5ec;padding:20px 40px;border-top:1px solid rgba(0,0,0,.06);">
+          <p style="margin:0;font-size:12px;color:#aaa;text-align:center;">© {year} RestoHub · Correo automático, no respondas.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+
+
+def _html_bienvenida(nombre: str) -> str:
+    year = datetime.date.today().year
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f5f5ec;font-family:Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
+  <tr><td align="center">
+    <table width="520" cellpadding="0" cellspacing="0"
+           style="background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
+      <tr>
+        <td style="background:#0a3828;padding:32px 40px;text-align:center;">
+          <h1 style="margin:0;font-family:Georgia,serif;font-size:26px;font-weight:700;color:#fffaca;">¡Bienvenido a RestoHub!</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:40px;">
+          <p style="margin:0 0 16px;font-size:15px;color:#52524a;line-height:1.6;">
+            Hola <strong style="color:#141410;">{nombre}</strong>, tu cuenta está activa y lista.
+          </p>
+          <p style="margin:0 0 28px;font-size:14px;color:#52524a;line-height:1.6;">
+            Ya puedes explorar restaurantes, hacer pedidos y acumular puntos.
+          </p>
+          <div style="text-align:center;">
+            <a href="http://localhost:5175"
+               style="display:inline-block;padding:14px 32px;background:#0a3828;color:#fffaca;
+                      text-decoration:none;border-radius:10px;font-weight:700;font-size:13px;
+                      letter-spacing:.06em;text-transform:uppercase;">
+              Ir a RestoHub
+            </a>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="background:#f5f5ec;padding:20px 40px;border-top:1px solid rgba(0,0,0,.06);">
+          <p style="margin:0;font-size:12px;color:#aaa;text-align:center;">© {year} RestoHub</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+
+
+# ── Funciones públicas ─────────────────────────────────────────────────────
 
 def enviar_codigo_verificacion(usuario, codigo: str) -> bool:
-    """
-    Envía el código de 6 dígitos al email del usuario.
-    Retorna True si se envió correctamente.
-    """
-    html = f"""
-<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
-    <tr>
-      <td align="center">
-        <table width="480" cellpadding="0" cellspacing="0"
-               style="background:#fff;border-radius:12px;overflow:hidden;
-                      box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+    """Envía el código OTP. Retorna True si el envío fue exitoso."""
+    api_key = getattr(settings, "RESEND_API_KEY", "")
+    if not api_key:
+        logger.warning("[email] RESEND_API_KEY no configurada.")
+        logger.info(
+            f"[email] (fallback) Código para {usuario.email}: {codigo}")
+        return False
 
-          <!-- Header -->
-          <tr>
-            <td style="background:#111827;padding:28px 40px;text-align:center;">
-              <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">
-                {APP_NAME}
-              </h1>
-            </td>
-          </tr>
+    r = _resend()
+    if not r:
+        logger.info(
+            f"[email] (fallback) Código para {usuario.email}: {codigo}")
+        return False
 
-          <!-- Body -->
-          <tr>
-            <td style="padding:36px 40px 28px;">
-              <p style="margin:0 0 8px;color:#374151;font-size:16px;font-weight:600;">
-                Hola, {usuario.nombre}
-              </p>
-              <p style="margin:0 0 28px;color:#6b7280;font-size:14px;line-height:1.6;">
-                Usa el siguiente código para verificar tu correo electrónico.
-                Es válido por <strong style="color:#374151;">10 minutos</strong>.
-              </p>
-
-              <!-- Código -->
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td align="center" style="padding:0 0 28px;">
-                    <div style="display:inline-block;background:#f9fafb;
-                                border:2px solid #e5e7eb;border-radius:12px;
-                                padding:20px 48px;">
-                      <span style="font-size:40px;font-weight:700;letter-spacing:12px;
-                                   color:#111827;font-family:'Courier New',monospace;">
-                        {codigo}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              </table>
-
-              <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 20px;">
-
-              <p style="margin:0;color:#9ca3af;font-size:12px;line-height:1.5;">
-                Si no solicitaste este código, ignora este correo.
-                Tienes máximo <strong>3 intentos</strong> antes de que el código se invalide.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="background:#f9fafb;border-top:1px solid #e5e7eb;
-                       padding:16px 40px;text-align:center;">
-              <p style="margin:0;color:#9ca3af;font-size:11px;">
-                Mensaje automático de {APP_NAME} — no respondas este correo.
-              </p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-"""
+    nombre = (usuario.nombre or usuario.email.split("@")[0]).split()[0]
+    params = {
+        "from":    _from_email(),
+        "to":      [usuario.email],
+        "subject": f"{codigo} — tu código RestoHub",
+        "html":    _html_codigo(nombre, codigo),
+    }
+    reply = _reply_to()
+    if reply:
+        params["reply_to"] = reply
 
     try:
-        resend.Emails.send({
-            "from":    FROM_EMAIL,
-            "to":      [usuario.email],
-            "subject": f"{APP_NAME} — Tu código de verificación: {codigo}",
-            "html":    html,
-            "text":    (
-                f"Hola {usuario.nombre},\n\n"
-                f"Tu código de verificación es: {codigo}\n\n"
-                f"Es válido por 10 minutos y tienes 3 intentos.\n\n"
-                f"Si no solicitaste esto, ignora este correo.\n\n"
-                f"— {APP_NAME}"
-            ),
-        })
-        logger.info(
-            "[email] Código de verificación enviado a %s", usuario.email)
-        return True
+        resp = r.Emails.send(params)
+        # v2 retorna dict con 'id' en éxito
+        email_id = resp.get("id") if isinstance(
+            resp, dict) else getattr(resp, "id", None)
+        if email_id:
+            logger.info(
+                f"[email] ✓ Código enviado a {usuario.email} (id={email_id})")
+            return True
+        logger.error(f"[email] Resend sin id en respuesta: {resp}")
+        return False
     except Exception as exc:
-        logger.error("[email] Error enviando código a %s: %s",
-                     usuario.email, exc)
+        logger.error(f"[email] Error enviando a {usuario.email}: {exc}")
+        logger.info(
+            f"[email] (fallback) Código para {usuario.email}: {codigo}")
         return False
 
 
 def enviar_bienvenida(usuario) -> bool:
-    """Email de bienvenida tras verificar el correo exitosamente."""
-    html = f"""
-<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
-    <tr>
-      <td align="center">
-        <table width="480" cellpadding="0" cellspacing="0"
-               style="background:#fff;border-radius:12px;overflow:hidden;
-                      box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="background:#111827;padding:28px 40px;text-align:center;">
-              <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;">{APP_NAME}</h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 40px 28px;">
-              <p style="margin:0 0 12px;color:#374151;font-size:16px;font-weight:600;">
-                ¡Bienvenido, {usuario.nombre}!
-              </p>
-              <p style="margin:0;color:#6b7280;font-size:14px;line-height:1.6;">
-                Tu correo ha sido verificado correctamente.
-                Ya puedes iniciar sesión en {APP_NAME}.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="background:#f9fafb;border-top:1px solid #e5e7eb;
-                       padding:16px 40px;text-align:center;">
-              <p style="margin:0;color:#9ca3af;font-size:11px;">
-                Mensaje automático de {APP_NAME}.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-"""
+    """Envía bienvenida tras verificar email. Fallo silencioso."""
+    api_key = getattr(settings, "RESEND_API_KEY", "")
+    if not api_key:
+        return False
+
+    r = _resend()
+    if not r:
+        return False
+
+    nombre = (usuario.nombre or usuario.email.split("@")[0]).split()[0]
+    params = {
+        "from":    _from_email(),
+        "to":      [usuario.email],
+        "subject": f"¡Bienvenido a RestoHub, {nombre}!",
+        "html":    _html_bienvenida(nombre),
+    }
+    reply = _reply_to()
+    if reply:
+        params["reply_to"] = reply
+
     try:
-        resend.Emails.send({
-            "from":    FROM_EMAIL,
-            "to":      [usuario.email],
-            "subject": f"¡Bienvenido a {APP_NAME}!",
-            "html":    html,
-            "text":    f"¡Bienvenido {usuario.nombre}! Tu cuenta en {APP_NAME} está activa.",
-        })
-        return True
+        resp = r.Emails.send(params)
+        email_id = resp.get("id") if isinstance(
+            resp, dict) else getattr(resp, "id", None)
+        if email_id:
+            logger.info(
+                f"[email] ✓ Bienvenida enviada a {usuario.email} (id={email_id})")
+            return True
+        return False
     except Exception as exc:
-        logger.error("[email] Error enviando bienvenida a %s: %s",
-                     usuario.email, exc)
+        logger.error(f"[email] Error bienvenida a {usuario.email}: {exc}")
         return False

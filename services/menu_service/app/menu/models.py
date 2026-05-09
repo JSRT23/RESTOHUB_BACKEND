@@ -1,8 +1,6 @@
 # menu_service/app/menu/models.py
-# CAMBIO ARQUITECTÓNICO: Ingrediente y Plato ahora tienen FK opcional a Restaurante.
-# restaurante = null  → global (visible para todos, creado por admin_central)
-# restaurante = X     → local de ese restaurante (creado/gestionado por su gerente)
-# Estrategia de query: gerente ve sus propios + los globales.
+# CAMBIO v2: Agregado campo `imagen` a Restaurante.
+# Todo lo demás sin cambios — misma arquitectura de FK opcionales para Plato/Ingrediente.
 
 import uuid
 from django.db import models
@@ -38,6 +36,19 @@ class Restaurante(models.Model):
     moneda = models.CharField(
         max_length=10, choices=Moneda.choices, default=Moneda.COP)
     activo = models.BooleanField(default=True)
+
+    # ── NUEVO ─────────────────────────────────────────────────────────────────
+    imagen = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text=(
+            "URL pública de la foto del restaurante (Cloudinary, S3, Imgur, etc.). "
+            "Vacía = el frontend usa un placeholder."
+        ),
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -72,14 +83,9 @@ class Ingrediente(models.Model):
 
     restaurante = null  → ingrediente global (admin_central, visible en toda la cadena)
     restaurante = X     → ingrediente local de ese restaurante (gestionado por su gerente)
-
-    Estrategia de query:
-      Gerente ve: restaurante=su_id OR restaurante=null
-      Admin ve: todos
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # FK opcional — null = global
     restaurante = models.ForeignKey(
         Restaurante,
         on_delete=models.CASCADE,
@@ -99,8 +105,6 @@ class Ingrediente(models.Model):
         verbose_name = "Ingrediente"
         verbose_name_plural = "Ingredientes"
         ordering = ["nombre"]
-        # El mismo nombre puede existir en diferentes restaurantes
-        # pero no puede repetirse dentro del mismo contexto (global o mismo restaurante)
         constraints = [
             models.UniqueConstraint(
                 fields=["nombre", "restaurante"],
@@ -119,14 +123,9 @@ class Plato(models.Model):
 
     restaurante = null  → plato global (admin_central)
     restaurante = X     → plato local de ese restaurante (gerente)
-
-    El gerente crea platos propios de su restaurante y les asigna precio
-    mediante PrecioPlato. Los platos globales también pueden tener PrecioPlato
-    específico por restaurante.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # FK opcional — null = global
     restaurante = models.ForeignKey(
         Restaurante,
         on_delete=models.CASCADE,

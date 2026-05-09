@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "corsheaders",
-    "app.auth.apps.AuthConfig",
+    "app.auth.apps.AuthConfig",          # ← igual que el original
 ]
 
 MIDDLEWARE = [
@@ -106,8 +106,27 @@ SERVICE_NAME = "auth_service"
 # No usa Django EMAIL_BACKEND — llama directo a la API de Resend.
 # El email_service.py lee estas variables desde settings.
 
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY",    "")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",   "")
 
 # En desarrollo: onboarding@resend.dev funciona sin dominio propio.
 # En producción: cambiar a noreply@tudominio.com (requiere verificar dominio en Resend).
+
+# ---------------------------------------------------------------------------
+# Logging — ver emails en consola de Docker cuando falla el envío
+# ---------------------------------------------------------------------------
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "app.auth.email_service": {
+            "handlers":  ["console"],
+            "level":     "DEBUG",
+            "propagate": False,
+        },
+    },
+}

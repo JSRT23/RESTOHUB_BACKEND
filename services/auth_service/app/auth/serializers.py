@@ -1,18 +1,24 @@
-# auth_service/app/auth/serializers.py
+# auth_service/app/auth_app/serializers.py
+# CAMBIO v3:
+#   - RegistroSerializer: rol='cliente' no requiere restaurante_id
+#     (los clientes de la app no pertenecen a un restaurante)
+#   - Todo lo demás sin cambios respecto a v2.
+
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from .email_validator import validar_email_completo
-from .models import Rol, Usuario, ROLES_CON_RESTAURANTE, ROLES_CON_EMPLEADO
+from .models import Cliente, Rol, TipoDocumento, Usuario, ROLES_CON_RESTAURANTE, ROLES_CON_EMPLEADO
 
 
 def _check_email(email: str) -> str:
-    """Valida formato + MX lookup. Lanza ValidationError si el correo no es real."""
     ok, mensaje = validar_email_completo(email)
     if not ok:
         raise serializers.ValidationError(mensaje)
     return email.strip().lower()
 
+
+# ── Serializers existentes ─────────────────────────────────────────────────
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -41,7 +47,6 @@ class RegistroSerializer(serializers.ModelSerializer):
         ]
 
     def validate_email(self, value):
-        """MX lookup — verifica que el dominio tenga servidores de correo reales."""
         return _check_email(value)
 
     def validate(self, data):
@@ -53,24 +58,18 @@ class RegistroSerializer(serializers.ModelSerializer):
         rol = data.get("rol")
         restaurante_id = data.get("restaurante_id")
 
-        # restaurante_id sí es requerido desde el momento del registro
-        # porque el gerente lo conoce y lo pasa en el payload.
-        if rol in ROLES_CON_RESTAURANTE and not restaurante_id:
-            raise serializers.ValidationError(
-                {"restaurante_id": f"El rol '{rol}' requiere restaurante_id."}
-            )
+        # rol='cliente' y 'admin_central' no requieren restaurante_id
+        ROLES_SIN_RESTAURANTE = {Rol.CLIENTE, Rol.ADMIN_CENTRAL}
 
-        # empleado_id NO se valida en el registro.
-        # Al registrar, el empleado todavía no existe en staff_service.
-        # El flujo correcto es:
-        #   1. registrarUsuario en auth (sin empleado_id)
-        #   2. crearEmpleado en staff  (genera el empleado_id)
-        # El JWT vincula ambos por email en el primer login.
-        # Si el empleado_id llega (ej: flujo admin que ya lo tiene), se acepta.
+        if rol in ROLES_CON_RESTAURANTE and rol not in ROLES_SIN_RESTAURANTE:
+            if not restaurante_id:
+                raise serializers.ValidationError(
+                    {"restaurante_id": f"El rol '{rol}' requiere restaurante_id."}
+                )
 
-        if rol == Rol.ADMIN_CENTRAL and restaurante_id:
+        if rol in ROLES_SIN_RESTAURANTE and restaurante_id:
             raise serializers.ValidationError(
-                {"restaurante_id": "admin_central no debe tener restaurante_id."}
+                {"restaurante_id": f"El rol '{rol}' no debe tener restaurante_id."}
             )
 
         return data
@@ -105,3 +104,100 @@ class CambiarPasswordSerializer(serializers.Serializer):
                 {"password_confirm": "Las contraseñas no coinciden."}
             )
         return data
+
+
+# ── Cliente (sin cambios respecto a v2) ────────────────────────────────────
+
+class ClienteSerializer(serializers.ModelSerializer):
+    nombre_completo = serializers.CharField(read_only=True)
+    tiene_cuenta_app = serializers.BooleanField(read_only=True)
+    tipo_documento_display = serializers.CharField(
+        source="get_tipo_documento_display", read_only=True
+    )
+
+    class Meta:
+        model = Cliente
+        fields = (
+            "id",
+            "tipo_documento", "tipo_documento_display",
+            "cedula",
+            "nombre", "apellido", "nombre_completo",
+            "email", "telefono",
+            "restaurante_id", "usuario_id",
+            "tiene_cuenta_app",
+            "activo", "notas",
+            "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "id", "nombre_completo", "tiene_cuenta_app",
+            "tipo_documento_display", "created_at", "updated_at",
+        )
+
+
+class ClienteListSerializer(serializers.ModelSerializer):
+    nombre_completo = serializers.CharField(read_only=True)
+    tiene_cuenta_app = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = Cliente
+        fields = (
+            "id", "tipo_documento", "cedula",
+            "nombre", "apellido", "nombre_completo",
+            "email", "telefono",
+            "restaurante_id", "usuario_id",
+            "tiene_cuenta_app", "activo",
+            "created_at",
+        )
+
+
+class ClienteWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cliente
+        fields = (
+            "tipo_documento", "cedula",
+            "nombre", "apellido",
+            "email", "telefono",
+            "restaurante_id", "usuario_id",
+            "activo", "notas",
+        )
+
+    def validate_cedula(self, value: str) -> str:
+        return value.strip().upper()
+
+    def validate_usuario_id(self, value):
+        if value and not Usuario.objects.filter(id=value, activo=True).exists():
+            raise serializers.ValidationError(
+                "No existe un usuario activo con ese ID.")
+        return value
+
+    def validate(self, attrs):
+        tipo_doc = attrs.get("tipo_documento",   getattr(
+            self.instance, "tipo_documento",   None))
+        cedula = attrs.get("cedula",            getattr(
+            self.instance, "cedula",            None))
+        restaurante_id = attrs.get("restaurante_id",    getattr(
+            self.instance, "restaurante_id",    None))
+
+        if tipo_doc and cedula:
+            qs = Cliente.objects.filter(
+                tipo_documento=tipo_doc,
+                cedula=cedula,
+                restaurante_id=restaurante_id,
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"cedula": "Ya existe un cliente con ese documento en este restaurante."}
+                )
+        return attrs
+
+
+class VincularUsuarioSerializer(serializers.Serializer):
+    usuario_id = serializers.UUIDField()
+
+    def validate_usuario_id(self, value):
+        if not Usuario.objects.filter(id=value, activo=True).exists():
+            raise serializers.ValidationError(
+                "No existe un usuario activo con ese ID.")
+        return value

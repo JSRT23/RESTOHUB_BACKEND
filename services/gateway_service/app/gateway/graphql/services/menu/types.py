@@ -1,4 +1,7 @@
 # gateway_service/app/gateway/graphql/services/menu/types.py
+# CAMBIO v2: imagen agregado a RestauranteType y MenuRestauranteType.
+# Todo lo demás sin cambios.
+
 import graphene
 
 
@@ -10,6 +13,8 @@ class RestauranteType(graphene.ObjectType):
     direccion = graphene.String()
     moneda = graphene.String()
     activo = graphene.Boolean()
+    imagen = graphene.String(
+        description="URL de la foto del restaurante.")  # ← NUEVO
     fecha_creacion = graphene.String()
     fecha_actualizacion = graphene.String()
 
@@ -22,10 +27,6 @@ class CategoriaType(graphene.ObjectType):
 
 
 class IngredienteType(graphene.ObjectType):
-    """
-    restaurante_id = null → ingrediente global
-    restaurante_id = UUID → ingrediente del restaurante
-    """
     id = graphene.ID()
     restaurante_id = graphene.ID()
     nombre = graphene.String()
@@ -41,7 +42,6 @@ class PlatoIngredienteType(graphene.ObjectType):
     unidad_medida = graphene.String()
     cantidad = graphene.Float()
 
-    # FIX: el menu_service devuelve la FK como "ingrediente", no "ingrediente_id"
     def resolve_ingrediente_id(root, info):
         if isinstance(root, dict):
             return root.get("ingrediente_id") or root.get("ingrediente")
@@ -75,7 +75,6 @@ class PrecioPlatoType(graphene.ObjectType):
     activo = graphene.Boolean()
     esta_vigente = graphene.Boolean()
 
-    # FIX: normalizar claves snake_case del serializer
     def resolve_plato_id(root, info):
         if isinstance(root, dict):
             return root.get("plato_id") or root.get("plato")
@@ -93,10 +92,6 @@ class PrecioPlatoType(graphene.ObjectType):
 
 
 class PlatoType(graphene.ObjectType):
-    """
-    restaurante_id = null → plato global
-    restaurante_id = UUID → plato del restaurante
-    """
     id = graphene.ID()
     restaurante_id = graphene.ID()
     nombre = graphene.String()
@@ -110,7 +105,6 @@ class PlatoType(graphene.ObjectType):
     ingredientes = graphene.List(PlatoIngredienteType)
     precios = graphene.List(PrecioPlatoType)
 
-    # FIX: el menu_service devuelve la FK de categoría como "categoria" (no "categoria_id")
     def resolve_categoria_id(root, info):
         if isinstance(root, dict):
             return root.get("categoria_id") or root.get("categoria")
@@ -161,4 +155,6 @@ class MenuRestauranteType(graphene.ObjectType):
     ciudad = graphene.String()
     pais = graphene.String()
     moneda = graphene.String()
+    imagen = graphene.String(
+        description="URL de la foto del restaurante.")  # ← NUEVO
     categorias = graphene.List(MenuCategoriaType)

@@ -1,4 +1,10 @@
 # gateway_service/app/gateway/graphql/services/menu/queries.py
+# CAMBIO v2:
+#   - resolve_restaurante: expone imagen del restaurante.
+#   - resolve_restaurantes: expone imagen de cada restaurante.
+#   - resolve_menu_restaurante: agrega imagen al MenuRestauranteType.
+#   - Toda la lógica de agrupación sin cambios.
+
 import graphene
 from .types import (
     RestauranteType, CategoriaType, PlatoType,
@@ -27,8 +33,7 @@ class MenuQuery(graphene.ObjectType):
         activo=graphene.Boolean(),
         categoria_id=graphene.ID(),
         restaurante_id=graphene.ID(
-            description="Solo platos de ese restaurante."
-        ),
+            description="Solo platos de ese restaurante."),
         disponibles=graphene.ID(
             description="Platos globales + platos del restaurante X. Usar por el gerente."
         ),
@@ -39,8 +44,7 @@ class MenuQuery(graphene.ObjectType):
         IngredienteType,
         activo=graphene.Boolean(),
         restaurante_id=graphene.ID(
-            description="Solo ingredientes de ese restaurante."
-        ),
+            description="Solo ingredientes de ese restaurante."),
         disponibles=graphene.ID(
             description="Ingredientes globales + del restaurante X. Usar por el gerente."
         ),
@@ -56,6 +60,7 @@ class MenuQuery(graphene.ObjectType):
     # ── Resolvers ─────────────────────────────────────────────────────────
 
     def resolve_restaurantes(self, info, activo=None, pais=None):
+        # menu_client retorna dicts — imagen ya viene del serializer
         return menu_client.get_restaurantes(activo=activo, pais=pais) or []
 
     def resolve_restaurante(self, info, id):
@@ -67,6 +72,7 @@ class MenuQuery(graphene.ObjectType):
             return None
 
         moneda = restaurante.get("moneda", "COP")
+        imagen = restaurante.get("imagen", "")     # ← NUEVO
 
         precios_raw = menu_client.get_precios(
             restaurante_id=restaurante_id, activo=True) or []
@@ -76,7 +82,6 @@ class MenuQuery(graphene.ObjectType):
             if pid:
                 precios_por_plato[pid] = p
 
-        # Menú: platos globales + platos del restaurante que tengan precio activo
         platos_raw = menu_client.get_platos(
             activo=True, disponibles=restaurante_id) or []
         categorias_raw = menu_client.get_categorias(activo=True) or []
@@ -112,8 +117,10 @@ class MenuQuery(graphene.ObjectType):
             if not platos_cat:
                 continue
             categorias_result.append(MenuCategoriaType(
-                categoria_id=cat_id, nombre=cat.get("nombre", ""),
-                orden=cat.get("orden", 0), platos=platos_cat,
+                categoria_id=cat_id,
+                nombre=cat.get("nombre", ""),
+                orden=cat.get("orden", 0),
+                platos=platos_cat,
             ))
 
         if sin_categoria:
@@ -127,6 +134,7 @@ class MenuQuery(graphene.ObjectType):
             ciudad=restaurante.get("ciudad", ""),
             pais=restaurante.get("pais", ""),
             moneda=moneda,
+            imagen=imagen,                        # ← NUEVO
             categorias=categorias_result,
         )
 
