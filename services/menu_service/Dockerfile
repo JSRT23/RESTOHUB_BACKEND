@@ -12,8 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Recolectar estáticos
-RUN python manage.py collectstatic --no-input || true
+# collectstatic necesita SECRET_KEY aunque sea dummy
+# Las vars de DB/RabbitMQ no se usan en este paso
+RUN SECRET_KEY=build-dummy-secret \
+    DEBUG=False \
+    ALLOWED_HOSTS=* \
+    python manage.py collectstatic --no-input
 
 EXPOSE 8000
 
