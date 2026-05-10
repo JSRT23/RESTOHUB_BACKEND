@@ -1,4 +1,5 @@
 # menu_service/app/menu/infrastructure/messaging/mixins/publish_event.py
+import ssl
 import uuid
 import logging
 from datetime import datetime
@@ -13,47 +14,36 @@ logger = logging.getLogger(__name__)
 
 
 class PublicadorEventoMixin:
-    """
-    Mixin que añade publicación de eventos a RabbitMQ sobre cualquier ViewSet.
-
-    Mejora respecto a la versión anterior:
-    - Usa una sola conexión por request (lazy init).
-    - Cierra la conexión al finalizar el ciclo de vida del objeto.
-    - Loggea errores en lugar de silenciarlos.
-    """
-
     _rabbitmq_conexion = None
     _rabbitmq_canal = None
 
-    # ─────────────────────────────────────────
-    # Conexión lazy (se abre solo cuando se necesita)
-    # ─────────────────────────────────────────
-
     def _get_canal(self):
         if self._rabbitmq_canal is None or self._rabbitmq_canal.is_closed:
-            credenciales = pika.PlainCredentials(
-                settings.RABBITMQ["USER"],
-                settings.RABBITMQ["PASSWORD"]
-            )
+            rmq = settings.RABBITMQ
+
+            credenciales = pika.PlainCredentials(rmq["USER"], rmq["PASSWORD"])
             parametros = pika.ConnectionParameters(
-                host=settings.RABBITMQ["HOST"],
-                port=settings.RABBITMQ["PORT"],
-                virtual_host=settings.RABBITMQ["VHOST"],
+                host=rmq["HOST"],
+                port=rmq["PORT"],
+                virtual_host=rmq["VHOST"],
                 credentials=credenciales,
-                heartbeat=settings.RABBITMQ["HEARTBEAT"],
-                blocked_connection_timeout=settings.RABBITMQ["BLOCKED_CONNECTION_TIMEOUT"],
-                connection_attempts=settings.RABBITMQ["CONNECTION_ATTEMPTS"],
-                retry_delay=settings.RABBITMQ["RETRY_DELAY"],
+                heartbeat=rmq["HEARTBEAT"],
+                blocked_connection_timeout=rmq["BLOCKED_CONNECTION_TIMEOUT"],
+                connection_attempts=rmq["CONNECTION_ATTEMPTS"],
+                retry_delay=rmq["RETRY_DELAY"],
             )
+
+            # SSL para CloudAMQP
+            if rmq.get("USE_SSL"):
+                ssl_context = ssl.create_default_context()
+                parametros.ssl_options = pika.SSLOptions(
+                    ssl_context, rmq["HOST"])
+
             self._rabbitmq_conexion = pika.BlockingConnection(parametros)
             self._rabbitmq_canal = self._rabbitmq_conexion.channel()
             declarar_exchange(self._rabbitmq_canal)
 
         return self._rabbitmq_canal
-
-    # ─────────────────────────────────────────
-    # Publicar evento
-    # ─────────────────────────────────────────
 
     def publicar_evento(self, event_type: str, data: dict):
         evento = {
@@ -71,18 +61,13 @@ class PublicadorEventoMixin:
                 exchange=settings.RABBITMQ["EXCHANGE"],
                 routing_key=event_type,
                 body=SerializadorEventos.serializar(evento),
-                properties=pika.BasicProperties(
-                    delivery_mode=2),  # persistente
+                properties=pika.BasicProperties(delivery_mode=2),
             )
             logger.info(f"📤 Evento publicado: {event_type}")
         except Exception as e:
             logger.error(f"❌ Error publicando evento {event_type}: {e}")
         finally:
             self._cerrar_conexion()
-
-    # ─────────────────────────────────────────
-    # Cierre seguro
-    # ─────────────────────────────────────────
 
     def _cerrar_conexion(self):
         try:
