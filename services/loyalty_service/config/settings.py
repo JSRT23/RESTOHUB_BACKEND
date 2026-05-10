@@ -1,12 +1,26 @@
+"""
+Django settings for loyalty_service.
+Soporta desarrollo (DEBUG=True) y producción (DEBUG=False).
+"""
+
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# ─────────────────────────────────────────
+# SEGURIDAD
+# ─────────────────────────────────────────
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
+# ─────────────────────────────────────────
+# APLICACIONES
+# ─────────────────────────────────────────
 DJANGO_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -21,14 +35,17 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    # ✅ CORREGIDO: usar AppConfig para que ready() cargue los signals
     "app.loyalty.apps.LoyaltyConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+# ─────────────────────────────────────────
+# MIDDLEWARE
+# ─────────────────────────────────────────
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # ← estáticos en prod
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -57,31 +74,52 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+# ─────────────────────────────────────────
+# BASE DE DATOS
+# ─────────────────────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE":   "django.db.backends.postgresql",
         "NAME":     os.getenv("POSTGRES_DB"),
         "USER":     os.getenv("POSTGRES_USER"),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
         "HOST":     os.getenv("POSTGRES_HOST"),
-        "PORT":     os.getenv("POSTGRES_PORT"),
+        "PORT":     os.getenv("POSTGRES_PORT", "5432"),
+        # SSL requerido en Render (conexión externa)
+        "OPTIONS": {
+            "sslmode": os.getenv("POSTGRES_SSLMODE", "require"),
+        } if not DEBUG else {},
     }
 }
 
 # ─────────────────────────────────────────
-# Redis
+# REDIS — Upstash en prod, local en dev
 # ─────────────────────────────────────────
-_redis_host = os.getenv("REDIS_HOST", "redis")
-_redis_port = os.getenv("REDIS_PORT", "6379")
-_redis_db = os.getenv("REDIS_DB",   "0")
+# En producción usar REDIS_URL completa (rediss:// para TLS)
+# En desarrollo usar REDIS_HOST/PORT (docker compose)
+_redis_url = os.getenv("REDIS_URL")
+
+if _redis_url:
+    # Producción — Upstash con TLS
+    _redis_location = _redis_url
+else:
+    # Desarrollo — Redis local sin TLS
+    _redis_host = os.getenv("REDIS_HOST", "redis")
+    _redis_port = os.getenv("REDIS_PORT", "6379")
+    _redis_db = os.getenv("REDIS_DB",   "0")
+    _redis_location = f"redis://{_redis_host}:{_redis_port}/{_redis_db}"
 
 CACHES = {
     "default": {
         "BACKEND":  "django_redis.cache.RedisCache",
-        "LOCATION": f"redis://{_redis_host}:{_redis_port}/{_redis_db}",
+        "LOCATION": _redis_location,
         "OPTIONS": {
-            "CLIENT_CLASS":    "django_redis.client.DefaultClient",
-            "IGNORE_EXCEPTIONS": True,  # cache miss silencioso si Redis cae
+            "CLIENT_CLASS":      "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": True,   # cache miss silencioso si Redis cae
+            # SSL para Upstash (rediss://)
+            "CONNECTION_POOL_KWARGS": {
+                "ssl_cert_reqs": None,
+            } if _redis_url else {},
         },
         "KEY_PREFIX": "loyalty",
     }
@@ -90,18 +128,23 @@ CACHES = {
 REDIS_PUNTOS_TTL = int(os.getenv("REDIS_PUNTOS_TTL", 300))
 
 # ─────────────────────────────────────────
-# RabbitMQ
+# RABBITMQ
 # ─────────────────────────────────────────
 RABBITMQ = {
-    "HOST":     os.getenv("RABBITMQ_HOST",     "rabbitmq"),
-    "PORT":     int(os.getenv("RABBITMQ_PORT", 5672)),
-    "USER":     os.getenv("RABBITMQ_USER",     "guest"),
-    "PASSWORD": os.getenv("RABBITMQ_PASSWORD", "guest"),
-    "VHOST":    os.getenv("RABBITMQ_VHOST",    "/"),
-    "EXCHANGE": os.getenv("RABBITMQ_EXCHANGE", "restohub"),
+    "HOST":                       os.getenv("RABBITMQ_HOST",           "localhost"),
+    "PORT":                       int(os.getenv("RABBITMQ_PORT",       5672)),
+    "USER":                       os.getenv("RABBITMQ_USER",           "guest"),
+    "PASSWORD":                   os.getenv("RABBITMQ_PASSWORD",       "guest"),
+    "VHOST":                      os.getenv("RABBITMQ_VHOST",          "/"),
+    "EXCHANGE":                   os.getenv("RABBITMQ_EXCHANGE",       "restohub"),
+    "HEARTBEAT":                  int(os.getenv("RABBITMQ_HEARTBEAT",  60)),
+    "BLOCKED_CONNECTION_TIMEOUT": int(os.getenv("RABBITMQ_BLOCKED_TIMEOUT", 30)),
+    "CONNECTION_ATTEMPTS":        int(os.getenv("RABBITMQ_CONN_ATTEMPTS",   5)),
+    "RETRY_DELAY":                int(os.getenv("RABBITMQ_RETRY_DELAY",     3)),
+    # SSL para CloudAMQP (puerto 5671)
+    "USE_SSL": os.getenv("RABBITMQ_USE_SSL", "False") == "True",
 }
 
-# ✅ Requerido por publisher.py
 SERVICE_NAME = os.getenv("SERVICE_NAME", "loyalty_service")
 
 # ─────────────────────────────────────────
@@ -117,10 +160,41 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
 }
 
+# ─────────────────────────────────────────
+# INTERNACIONALIZACIÓN
+# ─────────────────────────────────────────
 LANGUAGE_CODE = "es-co"
 TIME_ZONE = "America/Bogota"
 USE_I18N = True
 USE_TZ = True
 
+# ─────────────────────────────────────────
+# ARCHIVOS ESTÁTICOS
+# ─────────────────────────────────────────
 STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ─────────────────────────────────────────
+# LOGGING
+# ─────────────────────────────────────────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django.request": {
+            "handlers":  ["console"],
+            "level":     "ERROR",
+            "propagate": False,
+        },
+    },
+}
