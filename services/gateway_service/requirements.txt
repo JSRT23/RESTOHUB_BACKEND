@@ -4,4 +4,6 @@ graphene-django
 httpx
 django-cors-headers
 PyJWT
- 
+gunicorn==21.2.0
+whitenoise==6.7.0
+python-dotenv
