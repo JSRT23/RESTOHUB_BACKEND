@@ -6,4 +6,6 @@ django-cors-headers
 python-decouple
 resend
 dnspython
- 
+python-dotenv
+gunicorn==21.2.0
+whitenoise==6.7.0
