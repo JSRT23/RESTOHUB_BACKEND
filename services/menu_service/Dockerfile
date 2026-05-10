@@ -21,8 +21,9 @@ RUN SECRET_KEY=build-dummy-secret \
 
 EXPOSE 8000
 
-# Producción usa gunicorn, desarrollo usa runserver
-CMD gunicorn config.wsgi:application \
+# migrate + gunicorn al arrancar (la DB sí está disponible en runtime)
+CMD python manage.py migrate --no-input && \
+    gunicorn config.wsgi:application \
     --bind 0.0.0.0:$PORT \
     --workers 2 \
     --timeout 120 \
