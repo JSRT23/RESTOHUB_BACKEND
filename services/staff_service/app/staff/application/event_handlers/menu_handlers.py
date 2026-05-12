@@ -20,6 +20,10 @@ _PAIS_NORMALIZE = {
     "br": "BR", "brasil": "BR", "brazil": "BR",
     "pe": "PE", "peru": "PE", "perú": "PE",
     "pa": "PA", "panama": "PA", "panamá": "PA",
+    "us": "US", "estados unidos": "US", "united states": "US",
+    "es": "ES", "españa": "ES", "espana": "ES", "spain": "ES",
+    "bo": "BO", "bolivia": "BO",
+    "ve": "VE", "venezuela": "VE",
 }
 
 

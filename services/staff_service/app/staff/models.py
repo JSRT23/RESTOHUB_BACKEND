@@ -16,6 +16,9 @@ class Pais(models.TextChoices):
     PERU = "PE", "Perú"
     PANAMA = "PA", "Panamá"
     ESTADOS_UNIDOS = "US", "Estados Unidos"
+    ESPANA = "ES", "España"
+    BOLIVIA = "BO", "Bolivia"
+    VENEZUELA = "VE", "Venezuela"
 
 
 class Moneda(models.TextChoices):
@@ -26,6 +29,9 @@ class Moneda(models.TextChoices):
     ARS = "ARS", "Peso argentino"
     BRL = "BRL", "Real brasileño"
     CLP = "CLP", "Peso chileno"
+    PEN = "PEN", "Sol peruano"
+    BOB = "BOB", "Boliviano"
+    VES = "VES", "Bolívar venezolano"
 
 
 class RolEmpleado(models.TextChoices):

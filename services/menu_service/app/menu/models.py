@@ -16,6 +16,9 @@ class Moneda(models.TextChoices):
     ARS = "ARS", "Peso argentino"
     BRL = "BRL", "Real brasileño"
     CLP = "CLP", "Peso chileno"
+    PEN = "PEN", "Sol peruano"
+    BOB = "BOB", "Boliviano"
+    VES = "VES", "Bolívar venezolano"
 
 
 class UnidadMedida(models.TextChoices):
