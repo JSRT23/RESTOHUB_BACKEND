@@ -25,7 +25,7 @@ AUTH_SERVICE_URL = _resolve_url()
 
 def _post(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{AUTH_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -45,7 +45,7 @@ def _post(path: str, data: dict = None):
 def _post_auth(path: str, data: dict, token: str):
     """POST autenticado — para endpoints que requieren Bearer token."""
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{AUTH_SERVICE_URL}{path}",
                 json=data,
@@ -67,7 +67,7 @@ def _post_auth(path: str, data: dict, token: str):
 
 def _get(path: str, headers: dict = None, params: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.get(
                 f"{AUTH_SERVICE_URL}{path}",
                 headers=headers or {},
