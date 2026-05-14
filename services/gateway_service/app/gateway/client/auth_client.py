@@ -3,8 +3,6 @@
 
 import logging
 import os
-import socket
-
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -12,12 +10,12 @@ logger = logging.getLogger(__name__)
 
 def _resolve_url() -> str:
     base = os.getenv("AUTH_SERVICE_URL", "http://auth_service:8000/api/auth")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        return base.replace(hostname, ip)
-    except Exception:
-        return base
+    # Normalizar: asegurar que termina en /api/auth
+    # Si la env var no incluye el path (ej: https://host.onrender.com), agregarlo
+    if base.endswith("/api/auth") or base.endswith("/api/auth/"):
+        return base.rstrip("/")
+    # Quitar trailing slash y agregar /api/auth
+    return base.rstrip("/") + "/api/auth"
 
 
 AUTH_SERVICE_URL = _resolve_url()
