@@ -1,9 +1,7 @@
 # gateway_service/app/gateway/graphql/services/auth/mutations.py
-# CAMBIO v3:
-#   - AutoRegistro: ya no hardcodea rol='admin_central'.
-#     Ahora el rol es opcional — si no se envía, el auth_service defaultea a 'cliente'.
-#     Esto permite que restohub_app registre usuarios clientes.
-#   - Todo lo demás sin cambios.
+# CAMBIO v4:
+#   - BootstrapAdmin: mutation pública para crear el primer admin_central.
+#     Se bloquea automáticamente después del primer uso (el auth_service lo verifica).
 
 import graphene
 from .types import AuthPayloadType, ClientePayload, ClienteType, UsuarioType
@@ -56,19 +54,15 @@ class AutoRegistro(graphene.Mutation):
     """
     Registro público sin autenticación.
     Sin rol → auth_service defaultea a 'cliente'.
-    cedula/tipoDocumento/telefono opcionales → crea Cliente vinculado automáticamente.
     """
     class Arguments:
         email = graphene.String(required=True)
         nombre = graphene.String(required=True)
         password = graphene.String(required=True)
         password_confirm = graphene.String(required=True)
-        cedula = graphene.String(
-            description="Número de cédula o documento (opcional).")
-        tipo_documento = graphene.String(
-            description="CC / CE / PA / NIT / OT. Default CC.")
-        telefono = graphene.String(
-            description="Teléfono de contacto (opcional).")
+        cedula = graphene.String()
+        tipo_documento = graphene.String()
+        telefono = graphene.String()
 
     ok = graphene.Boolean()
     error = graphene.String()
@@ -82,7 +76,6 @@ class AutoRegistro(graphene.Mutation):
             "nombre":           nombre,
             "password":         password,
             "password_confirm": password_confirm,
-            # rol omitido → auth_service defaultea a 'cliente'
         }
         if cedula:
             payload["cedula"] = cedula
@@ -102,6 +95,56 @@ class AutoRegistro(graphene.Mutation):
             codigo_dev=result.get("codigo_dev"),
         )
 
+
+# ── NUEVO: Bootstrap Admin ─────────────────────────────────────────────────
+
+class BootstrapAdmin(graphene.Mutation):
+    """
+    Crea el primer admin_central del sistema sin requerir autenticación.
+
+    Solo funciona UNA VEZ. Si ya existe un admin_central, retorna error.
+    Diseñado para el setup inicial en producción cuando no hay shell disponible.
+
+    Uso:
+        mutation {
+          bootstrapAdmin(
+            email: "admin@ejemplo.com"
+            nombre: "Juan Ramos"
+            password: "MiPassword123*"
+            passwordConfirm: "MiPassword123*"
+          ) {
+            ok
+            error
+            email
+          }
+        }
+    """
+    class Arguments:
+        email = graphene.String(required=True)
+        nombre = graphene.String(required=True)
+        password = graphene.String(required=True)
+        password_confirm = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+    email = graphene.String()
+
+    def mutate(self, info, email, nombre, password, password_confirm):
+        result = auth_client.bootstrap_admin({
+            "email":            email,
+            "nombre":           nombre,
+            "password":         password,
+            "password_confirm": password_confirm,
+        })
+        if not result:
+            return BootstrapAdmin(ok=False, error="Error de conexión con auth_service.")
+        if result.get("_error") or not result.get("ok"):
+            detail = result.get("detail", "Error al crear el administrador.")
+            return BootstrapAdmin(ok=False, error=detail)
+        return BootstrapAdmin(ok=True, email=result.get("email"))
+
+
+# ── Mutations existentes (sin cambios) ────────────────────────────────────
 
 class RegistrarUsuario(graphene.Mutation):
     """Crea un usuario operativo. Requiere token de admin_central o gerente_local."""
@@ -267,7 +310,7 @@ class ReenviarCodigo(graphene.Mutation):
         return ReenviarCodigo(ok=True)
 
 
-# ── Cliente mutations (sin cambios vs v2) ──────────────────────────────────
+# ── Cliente mutations ──────────────────────────────────────────────────────
 
 class CrearCliente(graphene.Mutation):
     class Arguments:
@@ -422,6 +465,10 @@ def _extraer_error(result: dict) -> str:
 # ── Schema ─────────────────────────────────────────────────────────────────
 
 class AuthMutation(graphene.ObjectType):
+    # Setup inicial (una sola vez)
+    bootstrap_admin = BootstrapAdmin.Field()
+
+    # Auth
     login = Login.Field()
     refresh_token = RefreshToken.Field()
     auto_registro = AutoRegistro.Field()

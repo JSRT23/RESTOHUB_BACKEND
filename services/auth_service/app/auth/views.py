@@ -1,8 +1,8 @@
 # auth_service/app/auth_app/views.py
-# CAMBIO v3 (final):
-#   - AutoRegistroView: acepta `cedula` y `tipo_documento` opcionales.
-#     Si se proveen, crea automáticamente un Cliente vinculado al nuevo Usuario.
-#     Esto permite que restohub_app registre el cliente con su número de documento.
+# CAMBIO v4:
+#   - BootstrapAdminView: crea el primer admin_central sin autenticación.
+#     Solo funciona si NO existe ningún admin_central en la BD.
+#     Una vez creado, el endpoint queda bloqueado permanentemente.
 
 import jwt
 from rest_framework import status
@@ -49,7 +49,6 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Si es cliente de la app, verificar que tenga registro en el modelo Cliente
         if usuario.rol == "cliente":
             tiene_cliente = Cliente.objects.filter(
                 usuario_id=usuario.id, activo=True
@@ -151,6 +150,77 @@ class CambiarPasswordView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bootstrap — NUEVO
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BootstrapAdminView(APIView):
+    """
+    POST /api/auth/bootstrap-admin/
+
+    Crea el PRIMER admin_central del sistema sin requerir autenticación.
+    Si ya existe al menos un admin_central → error 400 (bloqueado para siempre).
+    Campos: email, nombre, password, password_confirm
+    """
+
+    def post(self, request):
+        # Bloquear si ya existe un admin_central
+        if Usuario.objects.filter(rol=Rol.ADMIN_CENTRAL).exists():
+            return Response(
+                {"detail": "El sistema ya tiene un administrador central configurado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = request.data.get("email", "").strip().lower()
+        nombre = request.data.get("nombre", "").strip()
+        password = request.data.get("password", "")
+        password_confirm = request.data.get("password_confirm", "")
+
+        # Validaciones básicas
+        if not email or not nombre or not password:
+            return Response(
+                {"detail": "email, nombre y password son requeridos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if password != password_confirm:
+            return Response(
+                {"detail": "Las contraseñas no coinciden."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(password) < 8:
+            return Response(
+                {"detail": "La contraseña debe tener al menos 8 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if Usuario.objects.filter(email=email).exists():
+            return Response(
+                {"detail": "Ya existe una cuenta con ese email."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Crear admin sin necesidad de verificar email
+        usuario = Usuario(
+            email=email,
+            nombre=nombre,
+            rol=Rol.ADMIN_CENTRAL,
+            activo=True,
+            email_verificado=True,
+        )
+        usuario.set_password(password)
+        usuario.save()
+
+        return Response(
+            {
+                "ok": True,
+                "email": usuario.email,
+                "nombre": usuario.nombre,
+                "rol": usuario.rol,
+                "detail": "Admin central creado. Ya puedes iniciar sesión.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Registro + verificación
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -184,14 +254,13 @@ class AutoRegistroView(APIView):
 
         usuario = serializer.save()
 
-        # ── Si viene cédula, crear Cliente vinculado automáticamente ──────────
+        # ── Si viene cédula, crear Cliente vinculado automáticamente ─────────
         cedula = data.get("cedula", "").strip().upper()
         tipo_documento = data.get("tipo_documento", "CC").strip().upper()
         telefono = data.get("telefono", "").strip()
 
         if cedula and rol == "cliente":
             try:
-                # Verificar que no exista ya un cliente global con esa cédula
                 existing = Cliente.objects.filter(
                     cedula=cedula,
                     tipo_documento=tipo_documento,
@@ -199,7 +268,6 @@ class AutoRegistroView(APIView):
                 ).first()
 
                 if existing and not existing.usuario_id:
-                    # Reutilizar cliente existente sin usuario → vincular
                     existing.usuario_id = usuario.id
                     existing.email = usuario.email
                     if not existing.nombre:
@@ -209,7 +277,6 @@ class AutoRegistroView(APIView):
                     existing.save(
                         update_fields=["usuario_id", "email", "nombre", "telefono", "updated_at"])
                 elif not existing:
-                    # Crear nuevo cliente global vinculado al usuario
                     nombre_parts = usuario.nombre.strip().split(" ", 1)
                     Cliente.objects.create(
                         tipo_documento=tipo_documento,
@@ -220,11 +287,10 @@ class AutoRegistroView(APIView):
                         email=usuario.email,
                         telefono=telefono,
                         usuario_id=usuario.id,
-                        restaurante_id=None,  # global — no pertenece a ningún restaurante específico
+                        restaurante_id=None,
                         activo=True,
                     )
             except Exception:
-                # No fallar el registro si la creación del cliente falla
                 pass
 
         # ── Enviar código de verificación ─────────────────────────────────────
@@ -309,7 +375,7 @@ class ReenviarCodigoView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Gestión de usuarios (sin cambios)
+# Gestión de usuarios
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RegistroView(APIView):
@@ -479,7 +545,7 @@ class VerificarTokenView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cliente (TPV) — sin cambios
+# Cliente (TPV)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROLES_CLIENTES = (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL, Rol.CAJERO)
@@ -495,12 +561,6 @@ class ClienteListCreateView(APIView):
 
         from django.db.models import Q as DQ
 
-        # Scope por restaurante:
-        # - Si se pasa restaurante_id explícito: muestra clientes de ese restaurante
-        #   Y clientes globales (restaurante_id=None) — cubre ambos casos.
-        # - Si NO se pasa restaurante_id y el usuario es gerente/cajero:
-        #   usa el restaurante del usuario como scope.
-        # - admin_central sin parámetro: ve todos.
         scope_restaurante = restaurante_id or (
             str(request.usuario.restaurante_id)
             if request.usuario.restaurante_id and request.usuario.rol != Rol.ADMIN_CENTRAL
@@ -516,8 +576,10 @@ class ClienteListCreateView(APIView):
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
         if q:
-            qs = qs.filter(DQ(nombre__icontains=q) | DQ(apellido__icontains=q) | DQ(
-                cedula__icontains=q) | DQ(email__icontains=q))
+            qs = qs.filter(
+                DQ(nombre__icontains=q) | DQ(apellido__icontains=q) |
+                DQ(cedula__icontains=q) | DQ(email__icontains=q)
+            )
 
         return Response(ClienteListSerializer(qs.order_by("nombre", "apellido"), many=True).data)
 

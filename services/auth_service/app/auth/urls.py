@@ -1,12 +1,12 @@
 # auth_service/app/auth_app/urls.py
-# CAMBIO v2: Agregadas URLs de Cliente al final.
-# Las URLs existentes sin cambios.
+# CAMBIO v3: Agrega path("bootstrap-admin/", ...) para crear el primer admin_central.
 
 from django.urls import path
 
 from .views import (
     ActivarUsuarioView,
     AutoRegistroView,
+    BootstrapAdminView,
     BuscarClienteView,
     CambiarPasswordView,
     ClienteDetailView,
@@ -18,13 +18,13 @@ from .views import (
     MeView,
     RefreshView,
     RegistroView,
+    ReenviarCodigoView,
     UsuarioDetailView,
     UsuariosView,
     VerificarCodigoView,
     VerificarTokenView,
     VincularEmpleadoView,
     VincularUsuarioClienteView,
-    ReenviarCodigoView,
 )
 
 urlpatterns = [
@@ -41,6 +41,10 @@ urlpatterns = [
     path("reenviar-codigo/",  ReenviarCodigoView.as_view()),
     path("registro/",         RegistroView.as_view()),
 
+    # ── Bootstrap (setup inicial) ──────────────────────────────────────────
+    # Solo funciona UNA VEZ — se bloquea automáticamente después del primer uso
+    path("bootstrap-admin/",  BootstrapAdminView.as_view()),
+
     # ── Gestión de usuarios ────────────────────────────────────────────────
     path("usuarios/",                   UsuariosView.as_view()),
     path("usuarios/<uuid:pk>/",         UsuarioDetailView.as_view()),
@@ -51,10 +55,11 @@ urlpatterns = [
     # ── Verificación interna (gateway) ─────────────────────────────────────
     path("verificar-token/",            VerificarTokenView.as_view()),
 
-    # ── NUEVO: Clientes (TPV / ventas en tienda) ───────────────────────────
+    # ── Clientes (TPV / ventas en tienda) ──────────────────────────────────
     path("clientes/",
          ClienteListCreateView.as_view()),
-    path("clientes/buscar/",                        BuscarClienteView.as_view()),
+    path("clientes/buscar/",
+         BuscarClienteView.as_view()),
     path("clientes/<uuid:pk>/",
          ClienteDetailView.as_view()),
     path("clientes/<uuid:pk>/vincular-usuario/",
@@ -76,6 +81,9 @@ urlpatterns = [
 #   POST /api/auth/reenviar-codigo/
 #   POST /api/auth/registro/
 #
+# Bootstrap (una sola vez):
+#   POST /api/auth/bootstrap-admin/
+#
 # Usuarios:
 #   GET   /api/auth/usuarios/
 #   GET   /api/auth/usuarios/{id}/
@@ -85,7 +93,7 @@ urlpatterns = [
 #   POST  /api/auth/usuarios/vincular-empleado/
 #   POST  /api/auth/verificar-token/
 #
-# Clientes (NUEVO):
+# Clientes:
 #   GET   /api/auth/clientes/
 #   POST  /api/auth/clientes/
 #   GET   /api/auth/clientes/buscar/?cedula=&restaurante_id=

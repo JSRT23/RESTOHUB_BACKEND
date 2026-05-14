@@ -1,4 +1,6 @@
 # gateway_service/app/gateway/client/auth_client.py
+# CAMBIO: agrega función bootstrap_admin() al final.
+
 import logging
 import os
 import socket
@@ -119,11 +121,6 @@ def activar_usuario(email: str, token: str) -> dict:
 
 
 def vincular_empleado(email: str, empleado_id: str, token: str) -> dict:
-    """
-    Asigna el empleado_id de staff_service a la cuenta auth por email.
-    Se llama automáticamente desde el gateway al crear un empleado en staff_service.
-    También puede llamarse manualmente desde la vista de admin de usuarios.
-    """
     return _post_auth(
         "/usuarios/vincular-empleado/",
         {"email": email, "empleado_id": empleado_id},
@@ -132,10 +129,6 @@ def vincular_empleado(email: str, empleado_id: str, token: str) -> dict:
 
 
 def get_autenticado(path: str, params: dict = None, token: str = None):
-    """
-    GET autenticado — envía el Bearer token en el header Authorization.
-    Usado por las queries de clientes que requieren auth en auth_service.
-    """
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -143,19 +136,11 @@ def get_autenticado(path: str, params: dict = None, token: str = None):
 
 
 def get(path: str, params: dict = None, token: str = None):
-    """
-    GET público o autenticado según si se pasa token.
-    Alias conveniente para get_autenticado.
-    """
     return get_autenticado(path, params=params, token=token)
 
 
 def get_usuarios(rol: str = None, activo: bool = None,
                  restaurante_id: str = None, token: str = None) -> list:
-    """
-    Lista usuarios del auth_service.
-    Requiere token de admin_central o gerente_local.
-    """
     params = {}
     if rol:
         params["rol"] = rol
@@ -173,7 +158,15 @@ def get_usuarios(rol: str = None, activo: bool = None,
         return []
     if isinstance(result, list):
         return result
-    # DRF paginado: {"count": N, "results": [...]}
     if isinstance(result, dict) and "results" in result:
         return result["results"]
     return []
+
+
+def bootstrap_admin(data: dict) -> dict:
+    """
+    Crea el primer admin_central del sistema.
+    Solo funciona si no existe ningún admin_central en la BD.
+    Llama a POST /api/auth/bootstrap-admin/ (endpoint público, sin token).
+    """
+    return _post("/bootstrap-admin/", data)
