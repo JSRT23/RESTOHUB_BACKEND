@@ -21,12 +21,13 @@ SECRET_KEY = os.getenv(
 
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = ["*"]
 
 # ─────────────────────────────────────────
 # APLICACIONES
 # ─────────────────────────────────────────
 INSTALLED_APPS = [
+    'django_prometheus',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -44,15 +45,17 @@ GRAPHENE = {
 }
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    # ← para archivos estáticos en prod
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
+    # ← reemplaza CommonMiddleware
+    'config.middleware.SafeCommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 REST_FRAMEWORK = {
@@ -85,13 +88,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME": os.getenv("POSTGRES_DB"),
         "USER": os.getenv("POSTGRES_USER"),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
         "HOST": os.getenv("POSTGRES_HOST"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
-        # SSL requerido en Render
         "OPTIONS": {
             "sslmode": os.getenv("POSTGRES_SSLMODE", "require"),
         } if not DEBUG else {},
@@ -112,7 +114,6 @@ RABBITMQ = {
     "BLOCKED_CONNECTION_TIMEOUT": int(os.getenv("RABBITMQ_BLOCKED_TIMEOUT", 30)),
     "CONNECTION_ATTEMPTS": int(os.getenv("RABBITMQ_CONN_ATTEMPTS", 5)),
     "RETRY_DELAY": int(os.getenv("RABBITMQ_RETRY_DELAY", 3)),
-    # SSL para CloudAMQP (puerto 5671)
     "USE_SSL": os.getenv("RABBITMQ_USE_SSL", "False") == "True",
 }
 

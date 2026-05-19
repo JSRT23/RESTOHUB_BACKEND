@@ -16,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ─────────────────────────────────────────
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = ["*"]
 
 # ─────────────────────────────────────────
 # APLICACIONES
@@ -38,20 +38,25 @@ LOCAL_APPS = [
     "app.loyalty.apps.LoyaltyConfig",
 ]
 
-INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+INSTALLED_APPS = ["django_prometheus"] + \
+    DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+# ↑ django_prometheus debe ser PRIMERO
 
 # ─────────────────────────────────────────
 # MIDDLEWARE
 # ─────────────────────────────────────────
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",  # ← PRIMERO
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # ← estáticos en prod
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
+    # ← reemplaza CommonMiddleware
+    "config.middleware.SafeCommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",   # ← ÚLTIMO
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -79,13 +84,12 @@ WSGI_APPLICATION = "config.wsgi.application"
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE":   "django.db.backends.postgresql",
+        "ENGINE":   "django_prometheus.db.backends.postgresql",  # ← instrumenta queries
         "NAME":     os.getenv("POSTGRES_DB"),
         "USER":     os.getenv("POSTGRES_USER"),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
         "HOST":     os.getenv("POSTGRES_HOST"),
         "PORT":     os.getenv("POSTGRES_PORT", "5432"),
-        # SSL requerido en Render (conexión externa)
         "OPTIONS": {
             "sslmode": os.getenv("POSTGRES_SSLMODE", "require"),
         } if not DEBUG else {},
@@ -95,15 +99,11 @@ DATABASES = {
 # ─────────────────────────────────────────
 # REDIS — Upstash en prod, local en dev
 # ─────────────────────────────────────────
-# En producción usar REDIS_URL completa (rediss:// para TLS)
-# En desarrollo usar REDIS_HOST/PORT (docker compose)
 _redis_url = os.getenv("REDIS_URL")
 
 if _redis_url:
-    # Producción — Upstash con TLS
     _redis_location = _redis_url
 else:
-    # Desarrollo — Redis local sin TLS
     _redis_host = os.getenv("REDIS_HOST", "redis")
     _redis_port = os.getenv("REDIS_PORT", "6379")
     _redis_db = os.getenv("REDIS_DB",   "0")
@@ -115,8 +115,7 @@ CACHES = {
         "LOCATION": _redis_location,
         "OPTIONS": {
             "CLIENT_CLASS":      "django_redis.client.DefaultClient",
-            "IGNORE_EXCEPTIONS": True,   # cache miss silencioso si Redis cae
-            # SSL para Upstash (rediss://)
+            "IGNORE_EXCEPTIONS": True,
             "CONNECTION_POOL_KWARGS": {
                 "ssl_cert_reqs": None,
             } if _redis_url else {},
@@ -141,7 +140,6 @@ RABBITMQ = {
     "BLOCKED_CONNECTION_TIMEOUT": int(os.getenv("RABBITMQ_BLOCKED_TIMEOUT", 30)),
     "CONNECTION_ATTEMPTS":        int(os.getenv("RABBITMQ_CONN_ATTEMPTS",   5)),
     "RETRY_DELAY":                int(os.getenv("RABBITMQ_RETRY_DELAY",     3)),
-    # SSL para CloudAMQP (puerto 5671)
     "USE_SSL": os.getenv("RABBITMQ_USE_SSL", "False") == "True",
 }
 

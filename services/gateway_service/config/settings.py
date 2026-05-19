@@ -16,12 +16,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ─────────────────────────────────────────
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-gateway")
 DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = ["*"]
 
 # ─────────────────────────────────────────
 # APLICACIONES
 # ─────────────────────────────────────────
 INSTALLED_APPS = [
+    "django_prometheus",                        # ← debe ir PRIMERO
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -41,15 +42,18 @@ GRAPHENE = {
 # MIDDLEWARE
 # ─────────────────────────────────────────
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",  # ← PRIMERO
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # ← estáticos en prod
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
+    # ← reemplaza CommonMiddleware
+    "config.middleware.SafeCommonMiddleware",
     "app.gateway.middleware.jwt_middleware.JWTMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",   # ← ÚLTIMO
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -84,11 +88,12 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# En DEBUG permite todo; en prod solo los orígenes listados
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 # ─────────────────────────────────────────
-# BASE DE DATOS — SQLite en memoria (gateway no persiste datos)
+# BASE DE DATOS — SQLite en memoria
+# (gateway no persiste datos propios;
+#  no se instrumenta con django_prometheus.db porque es SQLite)
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {

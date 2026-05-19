@@ -26,12 +26,13 @@ JWT_REFRESH_TOKEN_LIFETIME_DAYS = int(os.getenv("JWT_REFRESH_DAYS", "7"))
 
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = ["*"]
 
 # ─────────────────────────────────────────
 # APLICACIONES
 # ─────────────────────────────────────────
 INSTALLED_APPS = [
+    "django_prometheus",                        # ← debe ir PRIMERO
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -47,13 +48,16 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # ─────────────────────────────────────────
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",  # ← PRIMERO
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # ← estáticos en prod
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
+    # ← reemplaza CommonMiddleware
+    "config.middleware.SafeCommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",   # ← ÚLTIMO
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -80,13 +84,12 @@ WSGI_APPLICATION = "config.wsgi.application"
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django_prometheus.db.backends.postgresql",  # ← instrumenta queries
         "NAME":     os.getenv("POSTGRES_DB",       os.getenv("DB_NAME",     "auth_db")),
         "USER":     os.getenv("POSTGRES_USER",     os.getenv("DB_USER",     "restohub")),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "restohub")),
         "HOST":     os.getenv("POSTGRES_HOST",     os.getenv("DB_HOST",     "postgres")),
         "PORT":     os.getenv("POSTGRES_PORT",     os.getenv("DB_PORT",     "5432")),
-        # SSL requerido en Render (conexión externa)
         "OPTIONS": {
             "sslmode": os.getenv("POSTGRES_SSLMODE", "require"),
         } if not DEBUG else {},

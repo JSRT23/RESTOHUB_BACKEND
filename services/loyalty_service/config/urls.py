@@ -19,5 +19,6 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path("api/loyalty/",  include("app.loyalty.urls")),
+    path("api/loyalty/", include("app.loyalty.urls")),
+    path("", include("django_prometheus.urls")),   # ← expone /metrics
 ]
