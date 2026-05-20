@@ -1,4 +1,5 @@
 # gateway/graphql/services/loyalty/types.py
+# FIX: PromocionListType ahora incluye descripcion
 import graphene
 
 
@@ -67,6 +68,7 @@ class PromocionType(graphene.ObjectType):
 class PromocionListType(graphene.ObjectType):
     id = graphene.ID()
     nombre = graphene.String()
+    descripcion = graphene.String()   # ✅ agregado
     alcance = graphene.String()
     alcance_display = graphene.String()
     tipo_beneficio = graphene.String()

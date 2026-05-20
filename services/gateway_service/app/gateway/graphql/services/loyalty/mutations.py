@@ -1,10 +1,34 @@
 # gateway_service/app/gateway/graphql/services/loyalty/mutations.py
+# FIX:
+#   1. restaurante_id → restaurante al enviar al serializer de loyalty_service
+#   2. fechas con 'Z' para que Django USE_TZ=True las acepte
+#   3. Cupón: fecha_inicio/fin también con 'Z'
+
 import graphene
 from .types import (
     AplicacionPromocionType, CuentaPuntosType,
     CuponType, PromocionType, TransaccionPuntosType,
 )
 from ....client import loyalty_client
+
+
+def _add_tz(value: str) -> str:
+    """
+    Agrega 'Z' a un string de fecha ISO si no tiene timezone.
+    '2026-05-20T09:00:00'   → '2026-05-20T09:00:00Z'
+    '2026-05-20T09:00:00Z'  → '2026-05-20T09:00:00Z'  (sin cambio)
+    '2026-05-20'            → '2026-05-20T00:00:00Z'
+    """
+    if not value:
+        return value
+    # Ya tiene timezone
+    if value.endswith("Z") or "+" in value[10:]:
+        return value
+    # Solo fecha sin hora
+    if "T" not in value:
+        return value + "T00:00:00Z"
+    # Fecha con hora pero sin timezone
+    return value + "Z"
 
 
 # ─────────────────────────────────────────
@@ -72,12 +96,24 @@ class CrearPromocion(graphene.Mutation):
 
     promocion = graphene.Field(PromocionType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, **kwargs):
-        result = loyalty_client.crear_promocion(kwargs)
+        # restaurante_id es UUIDField directo en el modelo — NO renombrar
+        # El serializer lo espera exactamente como "restaurante_id"
+        if "restaurante_id" in kwargs and not kwargs["restaurante_id"]:
+            kwargs.pop("restaurante_id")
+
+        # ✅ FIX: agregar timezone 'Z' a las fechas para Django USE_TZ=True
+        if "fecha_inicio" in kwargs:
+            kwargs["fecha_inicio"] = _add_tz(kwargs["fecha_inicio"])
+        if "fecha_fin" in kwargs:
+            kwargs["fecha_fin"] = _add_tz(kwargs["fecha_fin"])
+
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        result = loyalty_client.crear_promocion(payload)
         if not result:
-            return CrearPromocion(ok=False, errores="Error al crear la promoción.")
+            return CrearPromocion(ok=False, error="Error al crear la promoción.")
         return CrearPromocion(ok=True, promocion=result)
 
 
@@ -94,43 +130,47 @@ class EditarPromocion(graphene.Mutation):
 
     promocion = graphene.Field(PromocionType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, promocion_id, **kwargs):
+        if "fecha_inicio" in kwargs and kwargs["fecha_inicio"]:
+            kwargs["fecha_inicio"] = _add_tz(kwargs["fecha_inicio"])
+        if "fecha_fin" in kwargs and kwargs["fecha_fin"]:
+            kwargs["fecha_fin"] = _add_tz(kwargs["fecha_fin"])
         payload = {k: v for k, v in kwargs.items() if v is not None}
         result = loyalty_client.editar_promocion(promocion_id, payload)
         if not result:
-            return EditarPromocion(ok=False, errores="Error al editar la promoción.")
+            return EditarPromocion(ok=False, error="Error al editar la promoción.")
         return EditarPromocion(ok=True, promocion=result)
 
 
 class ActivarPromocion(graphene.Mutation):
     class Arguments:
-        promocion_id = graphene.ID(required=True)
+        id = graphene.ID(required=True)
 
     promocion = graphene.Field(PromocionType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
-    def mutate(self, info, promocion_id):
-        result = loyalty_client.activar_promocion(promocion_id)
+    def mutate(self, info, id):
+        result = loyalty_client.activar_promocion(id)
         if not result:
-            return ActivarPromocion(ok=False, errores="Error al activar la promoción.")
+            return ActivarPromocion(ok=False, error="Error al activar la promoción.")
         return ActivarPromocion(ok=True, promocion=result)
 
 
 class DesactivarPromocion(graphene.Mutation):
     class Arguments:
-        promocion_id = graphene.ID(required=True)
+        id = graphene.ID(required=True)
 
     promocion = graphene.Field(PromocionType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
-    def mutate(self, info, promocion_id):
-        result = loyalty_client.desactivar_promocion(promocion_id)
+    def mutate(self, info, id):
+        result = loyalty_client.desactivar_promocion(id)
         if not result:
-            return DesactivarPromocion(ok=False, errores="Error al desactivar la promoción.")
+            return DesactivarPromocion(ok=False, error="Error al desactivar la promoción.")
         return DesactivarPromocion(ok=True, promocion=result)
 
 
@@ -144,7 +184,7 @@ class EvaluarPromocion(graphene.Mutation):
 
     aplicacion = graphene.Field(AplicacionPromocionType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, pedido_id, cliente_id, restaurante_id, total, detalles=None):
         payload = {
@@ -156,8 +196,7 @@ class EvaluarPromocion(graphene.Mutation):
         }
         result = loyalty_client.evaluar_promocion(payload)
         if not result:
-            return EvaluarPromocion(ok=False, errores="Error al evaluar promoción.")
-        # 200 = ninguna aplica (retorna {"detail": "..."})
+            return EvaluarPromocion(ok=False, error="Error al evaluar promoción.")
         if "detail" in result and "id" not in result:
             return EvaluarPromocion(ok=True, aplicacion=None)
         return EvaluarPromocion(ok=True, aplicacion=result)
@@ -180,16 +219,25 @@ class CrearCupon(graphene.Mutation):
 
     cupon = graphene.Field(CuponType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, **kwargs):
-        # El serializer espera "promocion" (FK), no "promocion_id"
+        # FK: promocion_id → promocion
         if "promocion_id" in kwargs:
             kwargs["promocion"] = kwargs.pop("promocion_id")
+
+        # ✅ FIX 3: fechas con timezone para cupones
+        # Cupon.fecha_inicio y fecha_fin son DateField → solo "YYYY-MM-DD"
+        # Quitar la parte de hora si viene con datetime completo
+        if "fecha_inicio" in kwargs and kwargs["fecha_inicio"]:
+            kwargs["fecha_inicio"] = kwargs["fecha_inicio"][:10]
+        if "fecha_fin" in kwargs and kwargs["fecha_fin"]:
+            kwargs["fecha_fin"] = kwargs["fecha_fin"][:10]
+
         payload = {k: v for k, v in kwargs.items() if v is not None}
         result = loyalty_client.crear_cupon(payload)
         if not result:
-            return CrearCupon(ok=False, errores="Error al generar el cupón.")
+            return CrearCupon(ok=False, error="Error al generar el cupón.")
         return CrearCupon(ok=True, cupon=result)
 
 
@@ -200,7 +248,7 @@ class CanjearCupon(graphene.Mutation):
 
     cupon = graphene.Field(CuponType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, cupon_id, pedido_id=None):
         result = loyalty_client.canjear_cupon(
@@ -208,7 +256,7 @@ class CanjearCupon(graphene.Mutation):
             pedido_id=str(pedido_id) if pedido_id else None,
         )
         if not result:
-            return CanjearCupon(ok=False, errores="Cupón no disponible o error al canjear.")
+            return CanjearCupon(ok=False, error="Cupón no disponible o error al canjear.")
         return CanjearCupon(ok=True, cupon=result)
 
 
@@ -217,17 +265,12 @@ class CanjearCupon(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class LoyaltyMutation(graphene.ObjectType):
-    # Puntos
     acumular_puntos = AcumularPuntos.Field()
     canjear_puntos = CanjearPuntos.Field()
-
-    # Promociones
     crear_promocion = CrearPromocion.Field()
     editar_promocion = EditarPromocion.Field()
     activar_promocion = ActivarPromocion.Field()
     desactivar_promocion = DesactivarPromocion.Field()
     evaluar_promocion = EvaluarPromocion.Field()
-
-    # Cupones
     crear_cupon = CrearCupon.Field()
     canjear_cupon = CanjearCupon.Field()
