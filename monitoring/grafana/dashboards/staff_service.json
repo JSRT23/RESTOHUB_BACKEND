@@ -4,9 +4,9 @@
   "tags": ["restohub", "staff"],
   "timezone": "browser",
   "schemaVersion": 38,
-  "refresh": "10s",
+  "refresh": "30s",
   "time": {
-    "from": "now-1h",
+    "from": "now-30m",
     "to": "now"
   },
   "panels": [
@@ -24,7 +24,10 @@
         {
           "expr": "sum(rate(django_http_requests_total_by_method_total{job=\"staff_service\"}[1m])) by (method)",
           "legendFormat": "{{method}}",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -34,6 +37,10 @@
             "mode": "palette-classic"
           }
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -50,12 +57,18 @@
         {
           "expr": "sum(rate(django_http_responses_total_by_status_total{job=\"staff_service\", status=~\"4..\"}[1m]))",
           "legendFormat": "4xx",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         },
         {
           "expr": "sum(rate(django_http_responses_total_by_status_total{job=\"staff_service\", status=~\"5..\"}[1m]))",
           "legendFormat": "5xx",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -94,6 +107,10 @@
             ]
           }
         ]
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -110,23 +127,36 @@
         {
           "expr": "histogram_quantile(0.50, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{job=\"staff_service\"}[5m])) by (le)) * 1000",
           "legendFormat": "p50",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         },
         {
           "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{job=\"staff_service\"}[5m])) by (le)) * 1000",
           "legendFormat": "p95",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         },
         {
           "expr": "histogram_quantile(0.99, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{job=\"staff_service\"}[5m])) by (le)) * 1000",
           "legendFormat": "p99",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "ms"
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -143,7 +173,10 @@
         {
           "expr": "up{job=\"staff_service\"}",
           "legendFormat": "staff_service",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -185,6 +218,10 @@
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -201,7 +238,10 @@
         {
           "expr": "topk(10, sum(rate(django_http_requests_latency_seconds_by_view_method_count{job=\"staff_service\"}[5m])) by (view))",
           "legendFormat": "{{view}}",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -211,6 +251,10 @@
             "mode": "palette-classic"
           }
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -227,13 +271,20 @@
         {
           "expr": "django_db_connections_total{job=\"staff_service\"}",
           "legendFormat": "{{alias}}",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short"
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -250,18 +301,28 @@
         {
           "expr": "sum(rate(django_db_execute_many_total{job=\"staff_service\"}[1m]))",
           "legendFormat": "execute_many",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         },
         {
           "expr": "sum(rate(django_db_errors_total{job=\"staff_service\"}[1m]))",
           "legendFormat": "errors",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps"
         }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -278,7 +339,10 @@
         {
           "expr": "django_migrations_applied_total{job=\"staff_service\"}",
           "legendFormat": "Aplicadas",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -295,6 +359,10 @@
           "calcs": ["lastNotNull"]
         },
         "colorMode": "background"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -311,7 +379,10 @@
         {
           "expr": "sum(django_http_requests_total_by_method_total{job=\"staff_service\"})",
           "legendFormat": "Total",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -328,6 +399,10 @@
           "calcs": ["lastNotNull"]
         },
         "colorMode": "background"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
     },
     {
@@ -344,7 +419,10 @@
         {
           "expr": "sum(django_http_responses_total_by_status_total{job=\"staff_service\", status=~\"[45]..\"})",
           "legendFormat": "Errores",
-          "datasource": "Prometheus"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-restohub-prom"
+          }
         }
       ],
       "fieldConfig": {
@@ -374,7 +452,20 @@
           "calcs": ["lastNotNull"]
         },
         "colorMode": "background"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-restohub-prom"
       }
+    }
+  ],
+  "__inputs__": [
+    {
+      "name": "DS_GRAFANACLOUD",
+      "label": "grafanacloud-restohub-prom",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "value": "grafanacloud-restohub-prom"
     }
   ]
 }

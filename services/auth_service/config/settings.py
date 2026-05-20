@@ -17,7 +17,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv(
     "SECRET_KEY", "django-insecure-auth-service-change-in-prod")
 
-# Clave JWT — debe ser la misma en gateway_service
 JWT_SECRET_KEY = os.getenv(
     "JWT_SECRET_KEY", "restohub-jwt-secret-change-in-prod")
 JWT_ALGORITHM = "HS256"
@@ -32,7 +31,7 @@ ALLOWED_HOSTS = ["*"]
 # APLICACIONES
 # ─────────────────────────────────────────
 INSTALLED_APPS = [
-    "django_prometheus",                        # ← debe ir PRIMERO
+    "django_prometheus",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -48,16 +47,15 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # ─────────────────────────────────────────
 MIDDLEWARE = [
-    "django_prometheus.middleware.PrometheusBeforeMiddleware",  # ← PRIMERO
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    # ← reemplaza CommonMiddleware
     "config.middleware.SafeCommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
-    "django_prometheus.middleware.PrometheusAfterMiddleware",   # ← ÚLTIMO
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -84,7 +82,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE": "django_prometheus.db.backends.postgresql",  # ← instrumenta queries
+        "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME":     os.getenv("POSTGRES_DB",       os.getenv("DB_NAME",     "auth_db")),
         "USER":     os.getenv("POSTGRES_USER",     os.getenv("DB_USER",     "restohub")),
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "restohub")),
@@ -131,11 +129,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 SERVICE_NAME = "auth_service"
 
 # ─────────────────────────────────────────
-# RESEND — email transaccional
+# EMAIL — Gmail SMTP
 # ─────────────────────────────────────────
-RESEND_API_KEY = os.getenv("RESEND_API_KEY",    "")
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",   "")
+EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_FROM = os.getenv(
+    "EMAIL_FROM",          f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
 
 # ─────────────────────────────────────────
 # LOGGING

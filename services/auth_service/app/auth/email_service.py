@@ -1,32 +1,62 @@
 # auth_service/app/auth/email_service.py
+# CAMBIO: reemplaza Resend por Gmail SMTP
+# El remitente es jramostorralvo@gmail.com — llega a CUALQUIER correo de usuario
+
 import logging
 import datetime
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _resend():
+# ── Configuración SMTP ─────────────────────────────────────────────────────
+
+def _smtp_config():
+    return {
+        "host":     getattr(settings, "EMAIL_HOST",     "smtp.gmail.com"),
+        "port":     getattr(settings, "EMAIL_PORT",     587),
+        "user":     getattr(settings, "EMAIL_HOST_USER",     ""),
+        "password": getattr(settings, "EMAIL_HOST_PASSWORD", ""),
+        "from":     getattr(settings, "EMAIL_FROM",     "RestoHub <jramostorralvo@gmail.com>"),
+    }
+
+
+def _send(to_email: str, subject: str, html: str) -> bool:
+    """Envía un email HTML via Gmail SMTP. Retorna True si tuvo éxito."""
+    cfg = _smtp_config()
+
+    if not cfg["user"] or not cfg["password"]:
+        logger.warning(
+            "[email] EMAIL_HOST_USER o EMAIL_HOST_PASSWORD no configurados.")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = cfg["from"]
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
     try:
-        import resend
-        resend.api_key = settings.RESEND_API_KEY
-        return resend
-    except ImportError:
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(cfg["user"], cfg["password"])
+            server.sendmail(cfg["user"], [to_email], msg.as_string())
+        logger.info(f"[email] ✓ Email enviado a {to_email}")
+        return True
+    except smtplib.SMTPAuthenticationError:
         logger.error(
-            "[email] librería 'resend' no instalada: pip install resend")
-        return None
+            "[email] Error de autenticación Gmail — verifica EMAIL_HOST_PASSWORD (App Password).")
+        return False
+    except Exception as exc:
+        logger.error(f"[email] Error enviando a {to_email}: {exc}")
+        return False
 
 
-def _from_email():
-    # Resend requiere formato "Nombre <email>" — sin nombre falla silenciosamente
-    return f"RestoHub <{getattr(settings, 'RESEND_FROM_EMAIL', 'onboarding@resend.dev')}>"
-
-
-def _reply_to():
-    return getattr(settings, "RESEND_REPLY_TO", "") or None
-
-
-# ── Templates ──────────────────────────────────────────────────────────────
+# ── Templates HTML ─────────────────────────────────────────────────────────
 
 def _html_codigo(nombre: str, codigo: str) -> str:
     year = datetime.date.today().year
@@ -95,7 +125,7 @@ def _html_bienvenida(nombre: str) -> str:
             Ya puedes explorar restaurantes, hacer pedidos y acumular puntos.
           </p>
           <div style="text-align:center;">
-            <a href="http://localhost:5175"
+            <a href="https://restohub-nine.vercel.app"
                style="display:inline-block;padding:14px 32px;background:#0a3828;color:#fffaca;
                       text-decoration:none;border-radius:10px;font-weight:700;font-size:13px;
                       letter-spacing:.06em;text-transform:uppercase;">
@@ -118,79 +148,29 @@ def _html_bienvenida(nombre: str) -> str:
 # ── Funciones públicas ─────────────────────────────────────────────────────
 
 def enviar_codigo_verificacion(usuario, codigo: str) -> bool:
-    """Envía el código OTP. Retorna True si el envío fue exitoso."""
-    api_key = getattr(settings, "RESEND_API_KEY", "")
-    if not api_key:
-        logger.warning("[email] RESEND_API_KEY no configurada.")
-        logger.info(
-            f"[email] (fallback) Código para {usuario.email}: {codigo}")
-        return False
-
-    r = _resend()
-    if not r:
-        logger.info(
-            f"[email] (fallback) Código para {usuario.email}: {codigo}")
-        return False
-
+    """Envía el código OTP al correo del usuario. Retorna True si tuvo éxito."""
     nombre = (usuario.nombre or usuario.email.split("@")[0]).split()[0]
-    params = {
-        "from":    _from_email(),
-        "to":      [usuario.email],
-        "subject": f"{codigo} — tu código RestoHub",
-        "html":    _html_codigo(nombre, codigo),
-    }
-    reply = _reply_to()
-    if reply:
-        params["reply_to"] = reply
 
-    try:
-        resp = r.Emails.send(params)
-        # v2 retorna dict con 'id' en éxito
-        email_id = resp.get("id") if isinstance(
-            resp, dict) else getattr(resp, "id", None)
-        if email_id:
-            logger.info(
-                f"[email] ✓ Código enviado a {usuario.email} (id={email_id})")
-            return True
-        logger.error(f"[email] Resend sin id en respuesta: {resp}")
-        return False
-    except Exception as exc:
-        logger.error(f"[email] Error enviando a {usuario.email}: {exc}")
+    enviado = _send(
+        to_email=usuario.email,
+        subject=f"{codigo} — tu código RestoHub",
+        html=_html_codigo(nombre, codigo),
+    )
+
+    if not enviado:
+        # Fallback en logs para desarrollo
         logger.info(
             f"[email] (fallback) Código para {usuario.email}: {codigo}")
-        return False
+
+    return enviado
 
 
 def enviar_bienvenida(usuario) -> bool:
-    """Envía bienvenida tras verificar email. Fallo silencioso."""
-    api_key = getattr(settings, "RESEND_API_KEY", "")
-    if not api_key:
-        return False
-
-    r = _resend()
-    if not r:
-        return False
-
+    """Envía email de bienvenida tras verificar. Fallo silencioso."""
     nombre = (usuario.nombre or usuario.email.split("@")[0]).split()[0]
-    params = {
-        "from":    _from_email(),
-        "to":      [usuario.email],
-        "subject": f"¡Bienvenido a RestoHub, {nombre}!",
-        "html":    _html_bienvenida(nombre),
-    }
-    reply = _reply_to()
-    if reply:
-        params["reply_to"] = reply
 
-    try:
-        resp = r.Emails.send(params)
-        email_id = resp.get("id") if isinstance(
-            resp, dict) else getattr(resp, "id", None)
-        if email_id:
-            logger.info(
-                f"[email] ✓ Bienvenida enviada a {usuario.email} (id={email_id})")
-            return True
-        return False
-    except Exception as exc:
-        logger.error(f"[email] Error bienvenida a {usuario.email}: {exc}")
-        return False
+    return _send(
+        to_email=usuario.email,
+        subject=f"¡Bienvenido a RestoHub, {nombre}!",
+        html=_html_bienvenida(nombre),
+    )
