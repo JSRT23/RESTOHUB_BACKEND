@@ -21,5 +21,6 @@ from app.gateway.graphql.schema import schema
 
 urlpatterns = [
     path("api/graphql/", csrf_exempt(GraphQLView.as_view(graphiql=True, schema=schema))),
-    path("", include("django_prometheus.urls")),   # ← expone /metrics
+    path("", include("django_prometheus.urls")),
+    path("api/pagos/", include("app.gateway.urls")),  # ← expone /metrics
 ]

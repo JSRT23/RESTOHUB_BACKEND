@@ -22,7 +22,7 @@ ALLOWED_HOSTS = ["*"]
 # APLICACIONES
 # ─────────────────────────────────────────
 INSTALLED_APPS = [
-    "django_prometheus",                        # ← debe ir PRIMERO
+    "django_prometheus",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -42,18 +42,17 @@ GRAPHENE = {
 # MIDDLEWARE
 # ─────────────────────────────────────────
 MIDDLEWARE = [
-    "django_prometheus.middleware.PrometheusBeforeMiddleware",  # ← PRIMERO
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    # ← reemplaza CommonMiddleware
     "config.middleware.SafeCommonMiddleware",
     "app.gateway.middleware.jwt_middleware.JWTMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django_prometheus.middleware.PrometheusAfterMiddleware",   # ← ÚLTIMO
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -92,8 +91,6 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 # ─────────────────────────────────────────
 # BASE DE DATOS — SQLite en memoria
-# (gateway no persiste datos propios;
-#  no se instrumenta con django_prometheus.db porque es SQLite)
 # ─────────────────────────────────────────
 DATABASES = {
     "default": {
@@ -103,7 +100,7 @@ DATABASES = {
 }
 
 # ─────────────────────────────────────────
-# JWT — misma clave que auth_service
+# JWT
 # ─────────────────────────────────────────
 JWT_SECRET_KEY = os.getenv(
     "JWT_SECRET_KEY", "restohub-jwt-secret-change-in-prod")
@@ -124,6 +121,20 @@ INVENTORY_SERVICE_URL = os.getenv(
     "INVENTORY_SERVICE_URL", "http://inventory_service:8000")
 LOYALTY_SERVICE_URL = os.getenv(
     "LOYALTY_SERVICE_URL",   "http://loyalty_service:8000")
+
+# ─────────────────────────────────────────
+# MERCADOPAGO
+# ─────────────────────────────────────────
+MP_ACCESS_TOKEN = os.getenv(
+    "MP_ACCESS_TOKEN",
+    "APP_USR-6165213885065990-051916-28283da5669849f0279aa180a5cf49a8-3386877776"
+)
+MP_PUBLIC_KEY = os.getenv(
+    "MP_PUBLIC_KEY",
+    "APP_USR-0370d09a-80df-4283-bb71-115617ca2642"
+)
+# URL base del frontend — usada en las URLs de retorno de MP
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5175")
 
 # ─────────────────────────────────────────
 # INTERNACIONALIZACIÓN
