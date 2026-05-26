@@ -1,11 +1,5 @@
 # gateway_service/app/gateway/graphql/services/order/mutations.py
-# CAMBIOS vs original:
-# 1. get_jwt_user — agrega autenticación y permisos por rol
-# 2. CrearPedido — permite mesero + inyecta restaurante_id del JWT si el rol lo requiere
-# 3. ConfirmarPedido / EntregarPedido — permite cajero
-# 4. IniciarComanda / ComandaLista — permite cocinero
-# 5. Mejor propagación de errores del order_service
-
+# FIX: EntregarPedido ahora acepta total_cobrado
 import graphene
 from .types import PedidoType, ComandaCocinaType, EntregaPedidoType
 from ....client import order_client
@@ -57,17 +51,11 @@ class CrearPedido(graphene.Mutation):
         user = get_jwt_user(info)
         if not user:
             return CrearPedido(ok=False, error="Debes iniciar sesión.")
-
         rol = user.get("rol")
-
-        # Roles con permiso para crear pedidos
         if rol not in ("admin_central", "gerente_local", "mesero", "cajero"):
             return CrearPedido(ok=False, error="No tienes permiso para crear pedidos.")
-
-        # Para mesero y cajero: el restaurante_id viene del JWT, no del argumento
         if rol in ("mesero", "cajero"):
             restaurante_id = user.get("restaurante_id") or restaurante_id
-
         payload = {
             "restaurante_id": restaurante_id,
             "canal":          canal,
@@ -77,9 +65,7 @@ class CrearPedido(graphene.Mutation):
         }
         data = order_client.crear_pedido(payload)
         if not data or _is_error(data):
-            msg = _extract_error(data, "Error al crear pedido.")
-            return CrearPedido(ok=False, error=msg)
-        # Crear comanda GENERAL automáticamente → cocinero la ve en PENDIENTE
+            return CrearPedido(ok=False, error=_extract_error(data, "Error al crear pedido."))
         try:
             pedido_id = data.get("id") if isinstance(data, dict) else None
             if pedido_id:
@@ -87,7 +73,6 @@ class CrearPedido(graphene.Mutation):
                     {"pedido": pedido_id, "estacion": "GENERAL"})
         except Exception:
             pass
-
         return CrearPedido(ok=True, pedido=data)
 
 
@@ -109,7 +94,6 @@ class ConfirmarPedido(graphene.Mutation):
         data = order_client.confirmar_pedido(id, descripcion)
         if not data or _is_error(data):
             return ConfirmarPedido(ok=False, error=_extract_error(data, "Error al confirmar."))
-
         return ConfirmarPedido(ok=True, pedido=data)
 
 
@@ -160,19 +144,25 @@ class EntregarPedido(graphene.Mutation):
         id = graphene.ID(required=True)
         descripcion = graphene.String()
         metodo_pago = graphene.String()
+        # FIX: total real cobrado tras descuentos de cupones/puntos
+        total_cobrado = graphene.Float()
 
     ok = graphene.Boolean()
     pedido = graphene.Field(PedidoType)
     error = graphene.String()
 
-    def mutate(self, info, id, descripcion="", metodo_pago=None):
+    def mutate(self, info, id, descripcion="", metodo_pago=None, total_cobrado=None):
         user = get_jwt_user(info)
         if not user:
             return EntregarPedido(ok=False, error="Debes iniciar sesión.")
         if user.get("rol") not in ("admin_central", "gerente_local", "cajero", "supervisor"):
             return EntregarPedido(ok=False, error="No tienes permiso.")
         data = order_client.entregar_pedido(
-            id, descripcion, metodo_pago=metodo_pago)
+            id,
+            descripcion=descripcion,
+            metodo_pago=metodo_pago,
+            total_cobrado=total_cobrado,   # FIX
+        )
         if not data or _is_error(data):
             return EntregarPedido(ok=False, error=_extract_error(data, "Error al entregar."))
         return EntregarPedido(ok=True, pedido=data)
@@ -221,8 +211,6 @@ class IniciarComanda(graphene.Mutation):
         data = order_client.iniciar_comanda(id)
         if not data or _is_error(data):
             return IniciarComanda(ok=False, error=_extract_error(data, "Error al iniciar comanda."))
-
-        # Mover pedido RECIBIDO → EN_PREPARACION
         try:
             pedido_id = data.get("pedido") if isinstance(data, dict) else None
             if pedido_id:
@@ -230,7 +218,6 @@ class IniciarComanda(graphene.Mutation):
                     str(pedido_id), "Comanda iniciada en cocina.")
         except Exception:
             pass
-
         return IniciarComanda(ok=True, comanda=data)
 
 
@@ -251,9 +238,6 @@ class ComandaLista(graphene.Mutation):
         data = order_client.comanda_lista(id)
         if not data or _is_error(data):
             return ComandaLista(ok=False, error=_extract_error(data, "Error al marcar comanda como lista."))
-
-        # Marcar el pedido como LISTO automáticamente
-        # (todas las comandas listas → pedido listo para el cajero)
         try:
             pedido_id = data.get("pedido") if isinstance(data, dict) else None
             if pedido_id:
@@ -261,7 +245,6 @@ class ComandaLista(graphene.Mutation):
                     str(pedido_id), "Comanda lista — pedido listo para cobro.")
         except Exception:
             pass
-
         return ComandaLista(ok=True, comanda=data)
 
 
@@ -287,11 +270,8 @@ class CrearEntrega(graphene.Mutation):
             return CrearEntrega(ok=False, error="Debes iniciar sesión.")
         if user.get("rol") not in ("admin_central", "gerente_local", "supervisor"):
             return CrearEntrega(ok=False, error="No tienes permiso.")
-        payload = {
-            "pedido":       pedido_id,
-            "tipo_entrega": tipo_entrega,
-            **{k: v for k, v in kwargs.items() if v is not None},
-        }
+        payload = {"pedido": pedido_id, "tipo_entrega": tipo_entrega,
+                   **{k: v for k, v in kwargs.items() if v is not None}}
         data = order_client.crear_entrega(payload)
         if not data or _is_error(data):
             return CrearEntrega(ok=False, error=_extract_error(data, "Error al crear entrega."))
@@ -363,19 +343,14 @@ class EntregaFallo(graphene.Mutation):
 # ─────────────────────────────────────────
 
 class OrderMutation(graphene.ObjectType):
-    # Pedidos
     crear_pedido = CrearPedido.Field()
     confirmar_pedido = ConfirmarPedido.Field()
     cancelar_pedido = CancelarPedido.Field()
     marcar_listo = MarcarPedidoListo.Field()
     entregar_pedido = EntregarPedido.Field()
-
-    # Comandas
     crear_comanda = CrearComanda.Field()
     iniciar_comanda = IniciarComanda.Field()
     comanda_lista = ComandaLista.Field()
-
-    # Entregas
     crear_entrega = CrearEntrega.Field()
     entrega_en_camino = EntregaEnCamino.Field()
     completar_entrega = CompletarEntrega.Field()

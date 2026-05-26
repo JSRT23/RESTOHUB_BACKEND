@@ -1,12 +1,6 @@
-# services/gateway_service/app/gateway/client/inventory_client.py
-# CAMBIOS vs original:
-# 1. get_costo_plato → corregido a /recetas/costo_plato/ (estaba en /stock/costo-plato/)
-# 2. Agrega get_recetas(plato_id) → GET /recetas/?plato_id=UUID
-# Todo lo demás idéntico al archivo actual.
-
+# gateway_service/app/gateway/client/inventory_client.py
 import httpx
 import os
-import socket
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,16 +9,9 @@ logger = logging.getLogger(__name__)
 def _resolve_url() -> str:
     base = os.getenv("INVENTORY_SERVICE_URL",
                      "http://inventory_service:8000/api/inventory")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        resolved = base.replace(hostname, ip)
-        logger.info("[inventory_client] URL resuelta: %s → %s", base, resolved)
-        return resolved
-    except Exception as e:
-        logger.warning(
-            "[inventory_client] No se pudo resolver hostname: %s", e)
-        return base
+    if base.endswith("/api/inventory") or base.endswith("/api/inventory/"):
+        return base.rstrip("/")
+    return base.rstrip("/") + "/api/inventory"
 
 
 INVENTORY_SERVICE_URL = _resolve_url()
@@ -32,7 +19,7 @@ INVENTORY_SERVICE_URL = _resolve_url()
 
 def _get(path: str, params: dict = None) -> dict | list | None:
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.get(
                 f"{INVENTORY_SERVICE_URL}{path}", params=params)
             response.raise_for_status()
@@ -51,7 +38,7 @@ def _get(path: str, params: dict = None) -> dict | list | None:
 
 def _post(path: str, data: dict = None) -> dict | None:
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{INVENTORY_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -70,7 +57,7 @@ def _post(path: str, data: dict = None) -> dict | None:
 
 def _patch(path: str, data: dict) -> dict | None:
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.patch(
                 f"{INVENTORY_SERVICE_URL}{path}", json=data)
             response.raise_for_status()
@@ -107,7 +94,7 @@ def _extract_error(data: dict, fallback: str) -> str:
     return data.get("detail") or data.get("error") or fallback
 
 
-# ─── Proveedor (idéntico) ─────────────────────────────────────────────────────
+# ─── Proveedor ────────────────────────────────────────────────────────────────
 
 def get_proveedores(activo=None, pais=None, ciudad=None, alcance=None):
     params = {}
@@ -148,7 +135,7 @@ def actualizar_proveedor(id: str, data: dict):
     return _patch(f"/proveedores/{id}/", data)
 
 
-# ─── Almacén (idéntico) ───────────────────────────────────────────────────────
+# ─── Almacén ──────────────────────────────────────────────────────────────────
 
 def get_almacenes(restaurante_id=None, activo=None):
     params = {}
@@ -177,7 +164,7 @@ def crear_almacen(data: dict):
     return _post("/almacenes/", data)
 
 
-# ─── Stock (idéntico) ─────────────────────────────────────────────────────────
+# ─── Stock ────────────────────────────────────────────────────────────────────
 
 def get_stock(almacen_id=None, bajo_minimo=None, agotado=None):
     params = {}
@@ -209,40 +196,21 @@ def get_movimientos(id: str):
     return [] if _is_error(result) else (result or [])
 
 
-# ─── RECETAS Y COSTO — NUEVO/CORREGIDO ───────────────────────────────────────
+# ─── Recetas y Costo ──────────────────────────────────────────────────────────
 
 def get_recetas(plato_id: str = None) -> list:
-    """
-    GET /api/inventory/recetas/?plato_id=UUID
-    Devuelve los ingredientes de la receta de un plato.
-    Se sincronizan automáticamente vía RabbitMQ desde menu_service.
-    """
     params = {}
     if plato_id:
         params["plato_id"] = plato_id
     result = _get("/recetas/", params=params)
     if _is_error(result):
         return []
-    # DRF puede devolver lista directa o paginada
     if isinstance(result, dict) and "results" in result:
         return result["results"]
     return result or []
 
 
 def get_costo_plato(plato_id: str, restaurante_id: str = None) -> dict | None:
-    """
-    GET /api/inventory/recetas/costo_plato/?plato_id=UUID&restaurante_id=UUID
-    Calcula costo de producción del plato y porciones disponibles.
-
-    Responde:
-      - costo_total: suma de (cantidad_receta × costo_unitario) por ingrediente
-      - tiene_costos_vacios: True si algún ingrediente tiene costo=0
-      - porciones_disponibles: mínimo de porciones posibles (cuello de botella)
-      - ingredientes[]: desglose con stock_actual y porciones_posibles
-      - advertencia: mensaje si costos incompletos
-
-    El costo_unitario se actualiza automáticamente al recibir una orden de compra.
-    """
     params = {"plato_id": plato_id}
     if restaurante_id:
         params["restaurante_id"] = restaurante_id
@@ -250,7 +218,7 @@ def get_costo_plato(plato_id: str, restaurante_id: str = None) -> dict | None:
     return None if _is_error(result) else result
 
 
-# ─── Lotes (idéntico) ─────────────────────────────────────────────────────────
+# ─── Lotes ────────────────────────────────────────────────────────────────────
 
 def get_lotes(estado=None, almacen_id=None, por_vencer=None):
     params = {}
@@ -277,7 +245,7 @@ def retirar_lote(id: str):
     return _post(f"/lotes/{id}/retirar/")
 
 
-# ─── Órdenes de compra (idéntico) ────────────────────────────────────────────
+# ─── Órdenes de compra ────────────────────────────────────────────────────────
 
 def get_ordenes_compra(estado=None, proveedor_id=None, restaurante_id=None):
     params = {}
@@ -312,7 +280,7 @@ def cancelar_orden_compra(id: str):
     return _post(f"/ordenes-compra/{id}/cancelar/")
 
 
-# ─── Alertas (idéntico) ───────────────────────────────────────────────────────
+# ─── Alertas ──────────────────────────────────────────────────────────────────
 
 def get_alertas(tipo=None, estado=None, restaurante_id=None):
     params = {}

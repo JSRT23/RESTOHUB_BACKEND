@@ -1,4 +1,5 @@
 # gateway_service/app/gateway/graphql/services/loyalty/queries.py
+# FIX: cupones ahora acepta restaurante_id para filtrar por restaurante
 import graphene
 from .types import (
     AplicacionPromocionType, CatalogoCategoriaType, CatalogoPlatoType,
@@ -10,14 +11,12 @@ from ....client import loyalty_client
 
 class LoyaltyQuery(graphene.ObjectType):
 
-    # Puntos
     puntos_cliente = graphene.Field(
         CuentaPuntosType,
         cliente_id=graphene.ID(required=True),
         description="Saldo de puntos — resuelve desde Redis si hay caché",
     )
 
-    # Transacciones
     transacciones_puntos = graphene.List(
         TransaccionPuntosType,
         cliente_id=graphene.ID(),
@@ -31,7 +30,6 @@ class LoyaltyQuery(graphene.ObjectType):
         transaccion_id=graphene.ID(required=True),
     )
 
-    # Promociones
     promociones = graphene.List(
         PromocionListType,
         activa=graphene.Boolean(),
@@ -44,12 +42,15 @@ class LoyaltyQuery(graphene.ObjectType):
         promocion_id=graphene.ID(required=True),
     )
 
-    # Cupones
+    # FIX: agrega restaurante_id para filtrar cupones por restaurante
     cupones = graphene.List(
         CuponType,
         cliente_id=graphene.ID(),
         activo=graphene.Boolean(),
         codigo=graphene.String(),
+        restaurante_id=graphene.ID(
+            description="Filtra cupones de un restaurante específico. Omitir = todos (admin)."
+        ),
     )
     cupon = graphene.Field(CuponType, cupon_id=graphene.ID(required=True))
     validar_cupon = graphene.Field(
@@ -58,7 +59,6 @@ class LoyaltyQuery(graphene.ObjectType):
         description="Valida cupón por código. Retorna null si no existe o no está disponible.",
     )
 
-    # Catálogo
     catalogo_platos = graphene.List(
         CatalogoPlatoType,
         activo=graphene.Boolean(),
@@ -75,10 +75,9 @@ class LoyaltyQuery(graphene.ObjectType):
         data = loyalty_client.get_puntos(cliente_id)
         if not data:
             return None
-        # El endpoint retorna _cache (con underscore) → renombrar a cache
         if "_cache" in data:
             data["cache"] = data.pop("_cache")
-        return data  # ✅ dict crudo
+        return data
 
     def resolve_transacciones_puntos(self, info, cliente_id=None, pedido_id=None,
                                      tipo=None, fecha_desde=None, fecha_hasta=None):
@@ -99,14 +98,14 @@ class LoyaltyQuery(graphene.ObjectType):
         ) or []
 
     def resolve_promocion(self, info, promocion_id):
-        # PromocionType tiene resolve_reglas que extrae root.get("reglas", [])
-        # No hay que hacer nada especial — retornamos el dict crudo completo
-        # ✅ dict crudo con reglas incluidas
         return loyalty_client.get_promocion(promocion_id)
 
-    def resolve_cupones(self, info, cliente_id=None, activo=None, codigo=None):
+    def resolve_cupones(self, info, cliente_id=None, activo=None,
+                        codigo=None, restaurante_id=None):
+        # FIX: pasa restaurante_id al cliente para filtrar
         return loyalty_client.get_cupones(
-            cliente_id=cliente_id, activo=activo, codigo=codigo
+            cliente_id=cliente_id, activo=activo,
+            codigo=codigo, restaurante_id=restaurante_id,
         ) or []
 
     def resolve_cupon(self, info, cupon_id):
@@ -116,13 +115,11 @@ class LoyaltyQuery(graphene.ObjectType):
         data = loyalty_client.validar_cupon(codigo)
         if not data:
             return None
-        # El endpoint retorna el cupon directamente cuando está disponible
-        # o {"detail": "...", "cupon": {...}} cuando no lo está
         if "cupon" in data:
-            return data["cupon"]  # no disponible pero existe
+            return data["cupon"]
         if "detail" in data and "codigo" not in data:
-            return None  # no encontrado
-        return data  # disponible — es el cupon directamente
+            return None
+        return data
 
     def resolve_catalogo_platos(self, info, activo=None, categoria_id=None):
         return loyalty_client.get_catalogo_platos(

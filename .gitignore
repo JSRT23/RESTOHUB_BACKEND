@@ -8,7 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# TODOS los archivos .env
+# TODOS los archivos .env que sean de produccion (no se deben commitear)
 .env
 *.env
 

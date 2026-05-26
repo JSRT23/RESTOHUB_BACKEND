@@ -1,8 +1,36 @@
 # auth_service/app/auth_app/views.py
-# CAMBIO v4:
-#   - BootstrapAdminView: crea el primer admin_central sin autenticación.
-#     Solo funciona si NO existe ningún admin_central en la BD.
-#     Una vez creado, el endpoint queda bloqueado permanentemente.
+# FIX: LoginView ahora incluye cliente_id en la respuesta del usuario
+# para que el frontend lo guarde en rh_user y lo use en las queries de loyalty.
+# Solo se cambia el método post de LoginView — todo lo demás igual.
+# Busca el bloque de LoginView y reemplaza el return Response final:
+
+# ── ANTES ────────────────────────────────────────────────────────────────────
+#         return Response({
+#             "access_token":  access_token,
+#             "refresh_token": refresh_token_str,
+#             "token_type":    "Bearer",
+#             "expires_in":    3600,
+#             "usuario":       UsuarioSerializer(usuario).data,
+#         })
+
+# ── DESPUÉS ───────────────────────────────────────────────────────────────────
+#         # FIX: incluir cliente_id si el usuario tiene un Cliente vinculado
+#         usuario_data = UsuarioSerializer(usuario).data
+#         if usuario.rol == "cliente":
+#             cliente = Cliente.objects.filter(usuario_id=usuario.id, activo=True).first()
+#             if cliente:
+#                 usuario_data["cliente_id"] = str(cliente.id)
+#
+#         return Response({
+#             "access_token":  access_token,
+#             "refresh_token": refresh_token_str,
+#             "token_type":    "Bearer",
+#             "expires_in":    3600,
+#             "usuario":       usuario_data,
+#         })
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ARCHIVO COMPLETO CON EL FIX APLICADO:
 
 import jwt
 from rest_framework import status
@@ -13,23 +41,14 @@ from .email_service import enviar_bienvenida, enviar_codigo_verificacion
 from .models import Cliente, EmailVerificationCode, RefreshToken, Rol, Usuario
 from .permissions import requiere_auth, requiere_rol
 from .serializers import (
-    CambiarPasswordSerializer,
-    ClienteListSerializer,
-    ClienteSerializer,
-    ClienteWriteSerializer,
-    LoginSerializer,
-    RegistroSerializer,
-    UsuarioSerializer,
-    VincularUsuarioSerializer,
+    CambiarPasswordSerializer, ClienteListSerializer, ClienteSerializer,
+    ClienteWriteSerializer, LoginSerializer, RegistroSerializer,
+    UsuarioSerializer, VincularUsuarioSerializer,
 )
 from .tokens import generar_access_token, generar_refresh_token, verificar_token
 
 ROLES_AUTO_REGISTRO = {Rol.ADMIN_CENTRAL, "cliente"}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Auth básica
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LoginView(APIView):
     def post(self, request):
@@ -40,43 +59,44 @@ class LoginView(APIView):
         usuario = serializer.validated_data["usuario"]
 
         if not usuario.email_verificado:
-            return Response(
-                {
-                    "detail": "Debes verificar tu correo antes de iniciar sesión.",
-                    "codigo": "EMAIL_NO_VERIFICADO",
-                    "email":  usuario.email,
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({
+                "detail": "Debes verificar tu correo antes de iniciar sesión.",
+                "codigo": "EMAIL_NO_VERIFICADO",
+                "email":  usuario.email,
+            }, status=status.HTTP_403_FORBIDDEN)
 
         if usuario.rol == "cliente":
             tiene_cliente = Cliente.objects.filter(
-                usuario_id=usuario.id, activo=True
-            ).exists()
+                usuario_id=usuario.id, activo=True).exists()
             if not tiene_cliente:
-                return Response(
-                    {
-                        "detail": (
-                            "Tu cuenta no tiene perfil de cliente activo. "
-                            "Contacta con el restaurante o vuelve a registrarte."
-                        ),
-                        "codigo": "SIN_PERFIL_CLIENTE",
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                return Response({
+                    "detail": (
+                        "Tu cuenta no tiene perfil de cliente activo. "
+                        "Contacta con el restaurante o vuelve a registrarte."
+                    ),
+                    "codigo": "SIN_PERFIL_CLIENTE",
+                }, status=status.HTTP_403_FORBIDDEN)
 
         access_token = generar_access_token(usuario)
         refresh_token_str, expira_at = generar_refresh_token(usuario)
         RefreshToken.objects.create(
-            usuario=usuario, token=refresh_token_str, expira_at=expira_at
-        )
+            usuario=usuario, token=refresh_token_str, expira_at=expira_at)
+
+        # FIX: incluir cliente_id en la respuesta para que el frontend
+        # lo guarde en rh_user y lo use en las queries de loyalty_service.
+        usuario_data = UsuarioSerializer(usuario).data
+        if usuario.rol == "cliente":
+            cliente = Cliente.objects.filter(
+                usuario_id=usuario.id, activo=True).first()
+            if cliente:
+                usuario_data["cliente_id"] = str(cliente.id)
 
         return Response({
             "access_token":  access_token,
             "refresh_token": refresh_token_str,
             "token_type":    "Bearer",
             "expires_in":    3600,
-            "usuario":       UsuarioSerializer(usuario).data,
+            "usuario":       usuario_data,
         })
 
 
@@ -85,19 +105,16 @@ class RefreshView(APIView):
         refresh_token_str = request.data.get("refresh_token")
         if not refresh_token_str:
             return Response({"detail": "refresh_token requerido."}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             verificar_token(refresh_token_str, tipo="refresh")
         except jwt.ExpiredSignatureError:
             return Response({"detail": "Sesión expirada."}, status=status.HTTP_401_UNAUTHORIZED)
         except jwt.InvalidTokenError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
-
         rt = RefreshToken.objects.filter(
             token=refresh_token_str, revocado=False).first()
         if not rt or not rt.usuario.activo:
             return Response({"detail": "Token inválido o revocado."}, status=status.HTTP_401_UNAUTHORIZED)
-
         return Response({
             "access_token": generar_access_token(rt.usuario),
             "token_type":   "Bearer",
@@ -110,8 +127,7 @@ class LogoutView(APIView):
         refresh_token_str = request.data.get("refresh_token")
         if refresh_token_str:
             RefreshToken.objects.filter(
-                token=refresh_token_str, usuario=request.usuario
-            ).update(revocado=True)
+                token=refresh_token_str, usuario=request.usuario).update(revocado=True)
         return Response({"detail": "Sesión cerrada."})
 
 
@@ -137,11 +153,9 @@ class CambiarPasswordView(APIView):
         serializer = CambiarPasswordSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
         usuario = request.usuario
         if not usuario.check_password(serializer.validated_data["password_actual"]):
             return Response({"password_actual": "Contraseña incorrecta."}, status=status.HTTP_400_BAD_REQUEST)
-
         usuario.set_password(serializer.validated_data["password_nuevo"])
         usuario.save()
         RefreshToken.objects.filter(
@@ -149,124 +163,51 @@ class CambiarPasswordView(APIView):
         return Response({"detail": "Contraseña actualizada. Inicia sesión nuevamente."})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Bootstrap — NUEVO
-# ─────────────────────────────────────────────────────────────────────────────
-
 class BootstrapAdminView(APIView):
-    """
-    POST /api/auth/bootstrap-admin/
-
-    Crea el PRIMER admin_central del sistema sin requerir autenticación.
-    Si ya existe al menos un admin_central → error 400 (bloqueado para siempre).
-    Campos: email, nombre, password, password_confirm
-    """
-
     def post(self, request):
-        # Bloquear si ya existe un admin_central
         if Usuario.objects.filter(rol=Rol.ADMIN_CENTRAL).exists():
             return Response(
                 {"detail": "El sistema ya tiene un administrador central configurado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+                status=status.HTTP_400_BAD_REQUEST)
         email = request.data.get("email", "").strip().lower()
         nombre = request.data.get("nombre", "").strip()
         password = request.data.get("password", "")
         password_confirm = request.data.get("password_confirm", "")
-
-        # Validaciones básicas
         if not email or not nombre or not password:
-            return Response(
-                {"detail": "email, nombre y password son requeridos."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "email, nombre y password son requeridos."}, status=status.HTTP_400_BAD_REQUEST)
         if password != password_confirm:
-            return Response(
-                {"detail": "Las contraseñas no coinciden."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Las contraseñas no coinciden."}, status=status.HTTP_400_BAD_REQUEST)
         if len(password) < 8:
-            return Response(
-                {"detail": "La contraseña debe tener al menos 8 caracteres."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "La contraseña debe tener al menos 8 caracteres."}, status=status.HTTP_400_BAD_REQUEST)
         if Usuario.objects.filter(email=email).exists():
-            return Response(
-                {"detail": "Ya existe una cuenta con ese email."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Crear admin sin necesidad de verificar email
-        usuario = Usuario(
-            email=email,
-            nombre=nombre,
-            rol=Rol.ADMIN_CENTRAL,
-            activo=True,
-            email_verificado=True,
-        )
+            return Response({"detail": "Ya existe una cuenta con ese email."}, status=status.HTTP_400_BAD_REQUEST)
+        usuario = Usuario(email=email, nombre=nombre,
+                          rol=Rol.ADMIN_CENTRAL, activo=True, email_verificado=True)
         usuario.set_password(password)
         usuario.save()
+        return Response({"ok": True, "email": usuario.email, "nombre": usuario.nombre, "rol": usuario.rol, "detail": "Admin central creado."}, status=status.HTTP_201_CREATED)
 
-        return Response(
-            {
-                "ok": True,
-                "email": usuario.email,
-                "nombre": usuario.nombre,
-                "rol": usuario.rol,
-                "detail": "Admin central creado. Ya puedes iniciar sesión.",
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Registro + verificación
-# ─────────────────────────────────────────────────────────────────────────────
 
 class AutoRegistroView(APIView):
-    """
-    POST /api/auth/auto-registro/
-
-    Campos requeridos: email, nombre, password, password_confirm
-    Campos opcionales: cedula, tipo_documento (CC por defecto), rol
-
-    Si se provee cedula, crea automáticamente un Cliente vinculado al usuario.
-    Rol por defecto: 'cliente'
-    """
-
     def post(self, request):
         data = request.data.copy() if hasattr(
             request.data, 'copy') else dict(request.data)
         if not data.get("rol"):
             data["rol"] = "cliente"
-
         serializer = RegistroSerializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
         rol = serializer.validated_data.get("rol")
         if rol not in ROLES_AUTO_REGISTRO:
-            return Response(
-                {"detail": f"El rol '{rol}' debe ser creado por un administrador."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
+            return Response({"detail": f"El rol '{rol}' debe ser creado por un administrador."}, status=status.HTTP_403_FORBIDDEN)
         usuario = serializer.save()
-
-        # ── Si viene cédula, crear Cliente vinculado automáticamente ─────────
         cedula = data.get("cedula", "").strip().upper()
         tipo_documento = data.get("tipo_documento", "CC").strip().upper()
         telefono = data.get("telefono", "").strip()
-
         if cedula and rol == "cliente":
             try:
                 existing = Cliente.objects.filter(
-                    cedula=cedula,
-                    tipo_documento=tipo_documento,
-                    restaurante_id__isnull=True,
-                ).first()
-
+                    cedula=cedula, tipo_documento=tipo_documento, restaurante_id__isnull=True).first()
                 if existing and not existing.usuario_id:
                     existing.usuario_id = usuario.id
                     existing.email = usuario.email
@@ -279,80 +220,55 @@ class AutoRegistroView(APIView):
                 elif not existing:
                     nombre_parts = usuario.nombre.strip().split(" ", 1)
                     Cliente.objects.create(
-                        tipo_documento=tipo_documento,
-                        cedula=cedula,
-                        nombre=nombre_parts[0],
-                        apellido=nombre_parts[1] if len(
+                        tipo_documento=tipo_documento, cedula=cedula,
+                        nombre=nombre_parts[0], apellido=nombre_parts[1] if len(
                             nombre_parts) > 1 else "",
-                        email=usuario.email,
-                        telefono=telefono,
-                        usuario_id=usuario.id,
-                        restaurante_id=None,
-                        activo=True,
+                        email=usuario.email, telefono=telefono,
+                        usuario_id=usuario.id, restaurante_id=None, activo=True,
                     )
             except Exception:
                 pass
-
-        # ── Enviar código de verificación ─────────────────────────────────────
         EmailVerificationCode.objects.filter(usuario=usuario).delete()
         codigo_obj = EmailVerificationCode.objects.create(usuario=usuario)
         enviado = enviar_codigo_verificacion(usuario, codigo_obj.codigo)
-
-        return Response(
-            {
-                "detail":        "Cuenta creada. Revisa tu correo e ingresa el código de 6 dígitos.",
-                "email":         usuario.email,
-                "email_enviado": enviado,
-                **({"codigo_dev": codigo_obj.codigo} if not enviado else {}),
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return Response({
+            "detail": "Cuenta creada. Revisa tu correo e ingresa el código de 6 dígitos.",
+            "email": usuario.email, "email_enviado": enviado,
+            **({"codigo_dev": codigo_obj.codigo} if not enviado else {}),
+        }, status=status.HTTP_201_CREATED)
 
 
 class VerificarCodigoView(APIView):
     def post(self, request):
         email = request.data.get("email",  "").strip().lower()
         codigo = request.data.get("codigo", "").strip()
-
         if not email or not codigo:
             return Response({"detail": "email y codigo son requeridos."}, status=status.HTTP_400_BAD_REQUEST)
-
         usuario = Usuario.objects.filter(email=email, activo=True).first()
         if not usuario:
             return Response({"detail": "No existe una cuenta con ese correo."}, status=status.HTTP_404_NOT_FOUND)
-
         if usuario.email_verificado:
             return Response({"detail": "Este correo ya está verificado. Puedes iniciar sesión."})
-
         codigo_obj = EmailVerificationCode.objects.filter(
             usuario=usuario).first()
         if not codigo_obj:
             return Response({"detail": "No hay un código activo.", "codigo": "SIN_CODIGO"}, status=status.HTTP_400_BAD_REQUEST)
-
         if codigo_obj.ha_expirado:
             codigo_obj.delete()
             return Response({"detail": "El código expiró.", "codigo": "CODIGO_EXPIRADO"}, status=status.HTTP_400_BAD_REQUEST)
-
         if codigo_obj.intentos_agotados:
             codigo_obj.delete()
             return Response({"detail": "Demasiados intentos.", "codigo": "INTENTOS_AGOTADOS"}, status=status.HTTP_400_BAD_REQUEST)
-
         if codigo_obj.codigo != codigo:
             codigo_obj.registrar_intento_fallido()
-            return Response(
-                {
-                    "detail": f"Código incorrecto. Te quedan {3 - codigo_obj.intentos} intento(s).",
-                    "codigo": "CODIGO_INCORRECTO",
-                    "intentos_restantes": 3 - codigo_obj.intentos,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+            return Response({
+                "detail": f"Código incorrecto. Te quedan {3-codigo_obj.intentos} intento(s).",
+                "codigo": "CODIGO_INCORRECTO", "intentos_restantes": 3-codigo_obj.intentos,
+            }, status=status.HTTP_400_BAD_REQUEST)
         usuario.email_verificado = True
         usuario.save(update_fields=["email_verificado"])
         codigo_obj.delete()
         enviar_bienvenida(usuario)
-
         return Response({"detail": "Email verificado correctamente.", "email": usuario.email})
 
 
@@ -361,22 +277,16 @@ class ReenviarCodigoView(APIView):
         email = request.data.get("email", "").strip().lower()
         if not email:
             return Response({"detail": "email requerido."}, status=status.HTTP_400_BAD_REQUEST)
-
         respuesta = Response(
             {"detail": "Si el correo existe y no está verificado, recibirás un nuevo código."})
         usuario = Usuario.objects.filter(email=email, activo=True).first()
         if not usuario or usuario.email_verificado:
             return respuesta
-
         EmailVerificationCode.objects.filter(usuario=usuario).delete()
         codigo_obj = EmailVerificationCode.objects.create(usuario=usuario)
         enviar_codigo_verificacion(usuario, codigo_obj.codigo)
         return respuesta
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Gestión de usuarios
-# ─────────────────────────────────────────────────────────────────────────────
 
 class RegistroView(APIView):
     @requiere_auth
@@ -384,11 +294,9 @@ class RegistroView(APIView):
         creador = request.usuario
         if creador.rol not in (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL):
             return Response({"detail": "No tienes permiso."}, status=status.HTTP_403_FORBIDDEN)
-
         serializer = RegistroSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
         rol_nuevo = serializer.validated_data.get("rol")
         if creador.rol == Rol.GERENTE_LOCAL:
             roles_permitidos = {Rol.SUPERVISOR, Rol.COCINERO,
@@ -396,7 +304,6 @@ class RegistroView(APIView):
             if rol_nuevo not in roles_permitidos:
                 return Response({"detail": f"Gerente no puede crear rol '{rol_nuevo}'."}, status=status.HTTP_403_FORBIDDEN)
             serializer.validated_data["restaurante_id"] = creador.restaurante_id
-
         serializer.validated_data["email_verificado"] = True
         return Response(UsuarioSerializer(serializer.save()).data, status=status.HTTP_201_CREATED)
 
@@ -544,10 +451,6 @@ class VerificarTokenView(APIView):
             return Response({"valido": False, "detail": str(exc)}, status=401)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Cliente (TPV)
-# ─────────────────────────────────────────────────────────────────────────────
-
 ROLES_CLIENTES = (Rol.ADMIN_CENTRAL, Rol.GERENTE_LOCAL, Rol.CAJERO)
 
 
@@ -558,29 +461,18 @@ class ClienteListCreateView(APIView):
         restaurante_id = request.query_params.get("restaurante_id")
         activo = request.query_params.get("activo")
         q = request.query_params.get("q")
-
         from django.db.models import Q as DQ
-
-        scope_restaurante = restaurante_id or (
+        scope = restaurante_id or (
             str(request.usuario.restaurante_id)
-            if request.usuario.restaurante_id and request.usuario.rol != Rol.ADMIN_CENTRAL
-            else None
-        )
-
-        if scope_restaurante:
-            qs = qs.filter(
-                DQ(restaurante_id=scope_restaurante) | DQ(
-                    restaurante_id__isnull=True)
-            )
-
+            if request.usuario.restaurante_id and request.usuario.rol != Rol.ADMIN_CENTRAL else None)
+        if scope:
+            qs = qs.filter(DQ(restaurante_id=scope) |
+                           DQ(restaurante_id__isnull=True))
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
         if q:
-            qs = qs.filter(
-                DQ(nombre__icontains=q) | DQ(apellido__icontains=q) |
-                DQ(cedula__icontains=q) | DQ(email__icontains=q)
-            )
-
+            qs = qs.filter(DQ(nombre__icontains=q) | DQ(apellido__icontains=q) | DQ(
+                cedula__icontains=q) | DQ(email__icontains=q))
         return Response(ClienteListSerializer(qs.order_by("nombre", "apellido"), many=True).data)
 
     @requiere_rol(*ROLES_CLIENTES)

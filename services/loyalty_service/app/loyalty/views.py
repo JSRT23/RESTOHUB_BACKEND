@@ -70,23 +70,16 @@ class PuntosViewSet(viewsets.ViewSet):
     """
 
     def retrieve(self, request, pk=None):
-        """
-        GET /puntos/{cliente_id}/
-        Cache hit → respuesta directa sin SELECT a PostgreSQL.
-        Cache miss → PostgreSQL + guardar en caché.
-        """
         cliente_id = str(pk)
 
         saldo_cache = _get_saldo_cache(cliente_id)
         if saldo_cache is not None:
-            # ✅ Cache hit: no ir a DB — construir respuesta mínima
             return Response({
                 "cliente_id": cliente_id,
                 "saldo":      saldo_cache,
                 "_cache":     True,
             })
 
-        # Cache miss → PostgreSQL
         cuenta = CuentaPuntos.objects.filter(cliente_id=cliente_id).first()
         if not cuenta:
             return Response(
@@ -101,11 +94,6 @@ class PuntosViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def acumular(self, request):
-        """
-        POST /puntos/acumular/
-        Acumulación manual de puntos (ajuste por operador).
-        Crea la CuentaPuntos si no existe.
-        """
         serializer = AcumularPuntosSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
@@ -142,10 +130,6 @@ class PuntosViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def canjear(self, request):
-        """
-        POST /puntos/canjear/
-        El serializer ya validó saldo suficiente e inyectó _cuenta.
-        """
         serializer = CanjearPuntosSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
@@ -172,7 +156,6 @@ class PuntosViewSet(viewsets.ViewSet):
 
 # ---------------------------------------------------------------------------
 # Transacciones
-# Read-only — se crean por el consumer o por acumular/canjear
 # ---------------------------------------------------------------------------
 
 class TransaccionPuntosViewSet(viewsets.ReadOnlyModelViewSet):
@@ -220,10 +203,6 @@ class TransaccionPuntosViewSet(viewsets.ReadOnlyModelViewSet):
 
 class PromocionViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
-
-    # El BrowsableAPIRenderer intenta renderizar el formulario de
-    # PromocionWriteSerializer con DateTimeField vacios, lo que causa
-    # ValueError en Django 5.x. Se fuerza JSON puro en este ViewSet.
     renderer_classes = [JSONRenderer]
 
     def get_queryset(self):
@@ -258,7 +237,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def activar(self, request, pk=None):
-        """POST /promociones/{id}/activar/"""
         promo = self.get_object()
         if promo.activa:
             return Response(
@@ -271,7 +249,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def desactivar(self, request, pk=None):
-        """POST /promociones/{id}/desactivar/"""
         promo = self.get_object()
         if not promo.activa:
             return Response(
@@ -284,13 +261,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"])
     def evaluar(self, request):
-        """
-        POST /promociones/evaluar/
-        Evalúa si alguna promoción activa aplica para el pedido dado.
-        Si aplica, crea AplicacionPromocion y publica PROMOCION_APLICADA
-        (el signal lo hace automáticamente al crear).
-        Idempotente: si el pedido ya tiene aplicación, retorna la existente.
-        """
         serializer = EvaluarPromocionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
@@ -301,7 +271,6 @@ class PromocionViewSet(viewsets.ModelViewSet):
         total = d["total"]
         detalles = d["detalles"]
 
-        # Idempotencia
         existente = AplicacionPromocion.objects.filter(
             pedido_id=pedido_id
         ).select_related("promocion").first()
@@ -398,6 +367,10 @@ class PromocionViewSet(viewsets.ModelViewSet):
 
 # ---------------------------------------------------------------------------
 # Cupones
+# FIX: get_queryset ahora filtra por restaurante_id
+# El modelo Cupon necesita el campo restaurante_id (ver models.py).
+# Si aún no tienes la migración, agrégalo primero:
+#   restaurante_id = models.UUIDField(null=True, blank=True, db_index=True)
 # ---------------------------------------------------------------------------
 
 class CuponViewSet(viewsets.ModelViewSet):
@@ -409,6 +382,8 @@ class CuponViewSet(viewsets.ModelViewSet):
         cliente_id = self.request.query_params.get("cliente_id")
         activo = self.request.query_params.get("activo")
         codigo = self.request.query_params.get("codigo")
+        restaurante_id = self.request.query_params.get(
+            "restaurante_id")  # ← FIX
 
         if cliente_id:
             qs = qs.filter(cliente_id=cliente_id)
@@ -416,6 +391,13 @@ class CuponViewSet(viewsets.ModelViewSet):
             qs = qs.filter(activo=activo.lower() == "true")
         if codigo:
             qs = qs.filter(codigo__iexact=codigo)
+        if restaurante_id:
+            from django.db.models import Q
+            # Devuelve globales (restaurante_id IS NULL) + propios del restaurante
+            qs = qs.filter(
+                Q(restaurante_id__isnull=True) | Q(
+                    restaurante_id=restaurante_id)
+            )
 
         return qs.order_by("-created_at")
 
@@ -428,10 +410,6 @@ class CuponViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def validar(self, request):
-        """
-        GET /cupones/validar/?codigo=ABC123
-        Verifica si el cupón existe, está disponible y no ha expirado.
-        """
         codigo = request.query_params.get("codigo", "").upper()
         if not codigo:
             return Response(
@@ -460,11 +438,6 @@ class CuponViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def canjear(self, request, pk=None):
-        """
-        POST /cupones/{id}/canjear/
-        Valida disponibilidad, incrementa usos_actuales y desactiva
-        si alcanzó el límite. El signal publica CUPON_CANJEADO.
-        """
         cupon = self.get_object()
 
         if not cupon.disponible:
@@ -480,7 +453,6 @@ class CuponViewSet(viewsets.ModelViewSet):
         cupon.usos_actuales += 1
         fields = ["usos_actuales"]
 
-        # Si alcanza el límite, desactivar automáticamente
         if cupon.usos_actuales >= cupon.limite_uso:
             cupon.activo = False
             fields.append("activo")

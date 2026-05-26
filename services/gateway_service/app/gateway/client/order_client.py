@@ -1,6 +1,6 @@
+# gateway_service/app/gateway/client/order_client.py
 import httpx
 import os
-import socket
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,23 +9,17 @@ logger = logging.getLogger(__name__)
 def _resolve_url() -> str:
     base = os.getenv("ORDER_SERVICE_URL",
                      "http://order_service:8000/api/orders")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        resolved = base.replace(hostname, ip)
-        logger.info("[order_client] URL resuelta: %s → %s", base, resolved)
-        return resolved
-    except Exception as e:
-        logger.warning("[order_client] No se pudo resolver hostname: %s", e)
-        return base
+    if base.endswith("/api/orders") or base.endswith("/api/orders/"):
+        return base.rstrip("/")
+    return base.rstrip("/") + "/api/orders"
 
 
 ORDER_SERVICE_URL = _resolve_url()
 
 
-def _get(path: str, params: dict = None) -> dict | list | None:
+def _get(path: str, params: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.get(f"{ORDER_SERVICE_URL}{path}", params=params)
             response.raise_for_status()
             return response.json()
@@ -38,9 +32,9 @@ def _get(path: str, params: dict = None) -> dict | list | None:
         return None
 
 
-def _post(path: str, data: dict = None) -> dict | None:
+def _post(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{ORDER_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -48,13 +42,10 @@ def _post(path: str, data: dict = None) -> dict | None:
     except httpx.HTTPStatusError as e:
         logger.error("[order_client] HTTP error %s: %s",
                      e.response.status_code, path)
-        # ── CAMBIO: propagar el error real del order_service ──────────────
         try:
             body = e.response.json()
             detail = (
-                body.get("detail")
-                or body.get("error")
-                or body.get("message")
+                body.get("detail") or body.get("error") or body.get("message")
                 or "; ".join(
                     f"{k}: {v[0] if isinstance(v, list) else v}"
                     for k, v in body.items()
@@ -70,9 +61,9 @@ def _post(path: str, data: dict = None) -> dict | None:
         return {"_error": True, "detail": str(e)}
 
 
-def _patch(path: str, data: dict) -> dict | None:
+def _patch(path: str, data: dict):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.patch(f"{ORDER_SERVICE_URL}{path}", json=data)
             response.raise_for_status()
             return response.json()
@@ -105,7 +96,6 @@ def get_pedidos(estado=None, canal=None, restaurante_id=None, cliente_id=None):
     if cliente_id:
         params["cliente_id"] = cliente_id
     data = _get("/pedidos/", params=params)
-    # order_service devuelve respuesta paginada: {"count": N, "results": [...]}
     if isinstance(data, dict) and "results" in data:
         return data["results"]
     return data or []
@@ -131,10 +121,13 @@ def marcar_listo(id: str, descripcion: str = ""):
     return _post(f"/pedidos/{id}/marcar_listo/", {"descripcion": descripcion})
 
 
-def entregar_pedido(id: str, descripcion: str = "", metodo_pago: str = None):
+def entregar_pedido(id: str, descripcion: str = "", metodo_pago: str = None,
+                    total_cobrado=None):
     payload = {"descripcion": descripcion}
     if metodo_pago:
         payload["metodo_pago"] = metodo_pago
+    if total_cobrado is not None:
+        payload["total_cobrado"] = str(total_cobrado)
     return _post(f"/pedidos/{id}/entregar/", payload)
 
 

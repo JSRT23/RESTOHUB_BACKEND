@@ -1,9 +1,4 @@
 # gateway_service/app/gateway/graphql/services/loyalty/mutations.py
-# FIX:
-#   1. restaurante_id → restaurante al enviar al serializer de loyalty_service
-#   2. fechas con 'Z' para que Django USE_TZ=True las acepte
-#   3. Cupón: fecha_inicio/fin también con 'Z'
-
 import graphene
 from .types import (
     AplicacionPromocionType, CuentaPuntosType,
@@ -13,21 +8,12 @@ from ....client import loyalty_client
 
 
 def _add_tz(value: str) -> str:
-    """
-    Agrega 'Z' a un string de fecha ISO si no tiene timezone.
-    '2026-05-20T09:00:00'   → '2026-05-20T09:00:00Z'
-    '2026-05-20T09:00:00Z'  → '2026-05-20T09:00:00Z'  (sin cambio)
-    '2026-05-20'            → '2026-05-20T00:00:00Z'
-    """
     if not value:
         return value
-    # Ya tiene timezone
     if value.endswith("Z") or "+" in value[10:]:
         return value
-    # Solo fecha sin hora
     if "T" not in value:
         return value + "T00:00:00Z"
-    # Fecha con hora pero sin timezone
     return value + "Z"
 
 
@@ -45,14 +31,14 @@ class AcumularPuntos(graphene.Mutation):
 
     cuenta = graphene.Field(CuentaPuntosType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, cliente_id, puntos, **kwargs):
         payload = {"cliente_id": str(cliente_id), "puntos": puntos}
         payload.update({k: v for k, v in kwargs.items() if v is not None})
         result = loyalty_client.acumular_puntos(payload)
         if not result:
-            return AcumularPuntos(ok=False, errores="Error al acumular puntos.")
+            return AcumularPuntos(ok=False, error="Error al acumular puntos.")
         return AcumularPuntos(ok=True, cuenta=result)
 
 
@@ -65,14 +51,14 @@ class CanjearPuntos(graphene.Mutation):
 
     cuenta = graphene.Field(CuentaPuntosType)
     ok = graphene.Boolean()
-    errores = graphene.String()
+    error = graphene.String()
 
     def mutate(self, info, cliente_id, puntos, **kwargs):
         payload = {"cliente_id": str(cliente_id), "puntos": puntos}
         payload.update({k: v for k, v in kwargs.items() if v is not None})
         result = loyalty_client.canjear_puntos(payload)
         if not result:
-            return CanjearPuntos(ok=False, errores="Saldo insuficiente o error al canjear.")
+            return CanjearPuntos(ok=False, error="Saldo insuficiente o error al canjear.")
         return CanjearPuntos(ok=True, cuenta=result)
 
 
@@ -99,17 +85,12 @@ class CrearPromocion(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, **kwargs):
-        # restaurante_id es UUIDField directo en el modelo — NO renombrar
-        # El serializer lo espera exactamente como "restaurante_id"
         if "restaurante_id" in kwargs and not kwargs["restaurante_id"]:
             kwargs.pop("restaurante_id")
-
-        # ✅ FIX: agregar timezone 'Z' a las fechas para Django USE_TZ=True
         if "fecha_inicio" in kwargs:
             kwargs["fecha_inicio"] = _add_tz(kwargs["fecha_inicio"])
         if "fecha_fin" in kwargs:
             kwargs["fecha_fin"] = _add_tz(kwargs["fecha_fin"])
-
         payload = {k: v for k, v in kwargs.items() if v is not None}
         result = loyalty_client.crear_promocion(payload)
         if not result:
@@ -210,6 +191,9 @@ class CrearCupon(graphene.Mutation):
     class Arguments:
         cliente_id = graphene.ID()
         promocion_id = graphene.ID()
+        # FIX: restaurante_id agregado — sin esto el payload no llega al loyalty_service
+        # null = cupón global (admin), valor = cupón del restaurante (gerente)
+        restaurante_id = graphene.ID()
         tipo_descuento = graphene.String(required=True)
         valor_descuento = graphene.Float(required=True)
         limite_uso = graphene.Int()
@@ -222,13 +206,16 @@ class CrearCupon(graphene.Mutation):
     error = graphene.String()
 
     def mutate(self, info, **kwargs):
-        # FK: promocion_id → promocion
+        # promocion_id → promocion (FK en el serializer de loyalty_service)
         if "promocion_id" in kwargs:
             kwargs["promocion"] = kwargs.pop("promocion_id")
 
-        # ✅ FIX 3: fechas con timezone para cupones
-        # Cupon.fecha_inicio y fecha_fin son DateField → solo "YYYY-MM-DD"
-        # Quitar la parte de hora si viene con datetime completo
+        # restaurante_id: si viene None o vacío, no incluir (cupón global)
+        if "restaurante_id" in kwargs and not kwargs["restaurante_id"]:
+            kwargs.pop("restaurante_id")
+
+        # Cupon.fecha_inicio / fecha_fin son DateField → solo YYYY-MM-DD
+        # El frontend puede mandar datetime completo (ISO) → truncar a fecha
         if "fecha_inicio" in kwargs and kwargs["fecha_inicio"]:
             kwargs["fecha_inicio"] = kwargs["fecha_inicio"][:10]
         if "fecha_fin" in kwargs and kwargs["fecha_fin"]:
@@ -243,16 +230,18 @@ class CrearCupon(graphene.Mutation):
 
 class CanjearCupon(graphene.Mutation):
     class Arguments:
-        cupon_id = graphene.ID(required=True)
+        # FIX: usar "id" (no cupon_id) para que GraphQL lo exponga como "id"
+        # y coincida con lo que manda el frontend: canjearCupon(id: $id, ...)
+        id = graphene.ID(required=True)
         pedido_id = graphene.ID()
 
     cupon = graphene.Field(CuponType)
     ok = graphene.Boolean()
     error = graphene.String()
 
-    def mutate(self, info, cupon_id, pedido_id=None):
+    def mutate(self, info, id, pedido_id=None):
         result = loyalty_client.canjear_cupon(
-            cupon_id,
+            id,
             pedido_id=str(pedido_id) if pedido_id else None,
         )
         if not result:

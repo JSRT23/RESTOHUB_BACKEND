@@ -1,6 +1,7 @@
 # auth_service/app/auth_app/models.py
-# CAMBIO v2: Agregado modelo Cliente para ventas en tienda (TPV/caja).
-# Todo lo demás sin cambios — misma arquitectura con AbstractBaseUser.
+# FIX: get_jwt_payload ahora incluye cliente_id para rol=cliente
+# Esto permite que el frontend use el cliente_id correcto en loyalty queries.
+# Solo se cambia el método get_jwt_payload() — todo lo demás igual.
 
 import random
 import string
@@ -20,13 +21,12 @@ class Rol(models.TextChoices):
     MESERO = "mesero",        "Mesero"
     CAJERO = "cajero",        "Cajero"
     REPARTIDOR = "repartidor",    "Repartidor"
-    CLIENTE = "cliente",       "Cliente App"   # usuarios de restohub_app
+    CLIENTE = "cliente",       "Cliente App"
 
 
 ROLES_CON_RESTAURANTE = {
     Rol.GERENTE_LOCAL, Rol.SUPERVISOR, Rol.COCINERO,
     Rol.MESERO, Rol.CAJERO, Rol.REPARTIDOR,
-    # CLIENTE excluido — no pertenece a ningún restaurante específico
 }
 
 ROLES_CON_EMPLEADO = {
@@ -36,7 +36,6 @@ ROLES_CON_EMPLEADO = {
 
 
 def _generar_codigo() -> str:
-    """Genera un código numérico de 6 dígitos."""
     return "".join(random.choices(string.digits, k=6))
 
 
@@ -59,14 +58,6 @@ class UsuarioManager(BaseUserManager):
 
 
 class Usuario(AbstractBaseUser, PermissionsMixin):
-    """
-    Usuario del sistema RestoHub.
-
-    Payload JWT según el rol:
-    - admin_central  → {user_id, rol, email, nombre}
-    - gerente_local  → + restaurante_id
-    - operativos     → + restaurante_id + empleado_id
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
     nombre = models.CharField(max_length=150)
@@ -109,6 +100,20 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
             payload["restaurante_id"] = str(self.restaurante_id)
         if self.rol in ROLES_CON_EMPLEADO and self.empleado_id:
             payload["empleado_id"] = str(self.empleado_id)
+
+        # FIX: para clientes de la app, incluir el cliente_id en el JWT
+        # Esto permite que el frontend use el ID correcto en loyalty queries.
+        # El Cliente vinculado al usuario se busca por usuario_id.
+        if self.rol == Rol.CLIENTE:
+            try:
+                cliente = Cliente.objects.filter(
+                    usuario_id=self.id, activo=True
+                ).first()
+                if cliente:
+                    payload["cliente_id"] = str(cliente.id)
+            except Exception:
+                pass
+
         return payload
 
 
@@ -131,15 +136,6 @@ class RefreshToken(models.Model):
 
 
 class EmailVerificationCode(models.Model):
-    """
-    Código de 6 dígitos enviado al email del usuario para verificar su cuenta.
-
-    Reglas:
-    - Expira en 10 minutos
-    - Máximo 3 intentos fallidos
-    - Se elimina al verificarse correctamente
-    - Se puede reenviar (elimina el anterior y crea uno nuevo)
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     usuario = models.ForeignKey(
         Usuario, on_delete=models.CASCADE, related_name="verification_codes")
@@ -174,17 +170,6 @@ class EmailVerificationCode(models.Model):
         return f"Código {self.usuario.email} — {estado}"
 
 
-# ── NUEVO: Cliente ─────────────────────────────────────────────────────────
-#
-# Representa a una persona identificada en el punto de venta físico (TPV/caja).
-# El cajero escribe la cédula → el sistema retorna los datos del cliente
-# y su UUID para vincular la venta con loyalty_service.
-#
-# Relación con Usuario (app móvil):
-#   - usuario_id opcional. Si el cliente usa la app, sus ventas presenciales
-#     también acumulan puntos en loyalty_service.
-# ──────────────────────────────────────────────────────────────────────────
-
 class TipoDocumento(models.TextChoices):
     CEDULA_CIUDADANIA = "CC",  "Cédula de Ciudadanía"
     CEDULA_EXTRANJERIA = "CE",  "Cédula de Extranjería"
@@ -195,38 +180,15 @@ class TipoDocumento(models.TextChoices):
 
 class Cliente(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # ── Identificación ──────────────────────────────────────────────────────
     tipo_documento = models.CharField(
-        max_length=5, choices=TipoDocumento.choices,
-        default=TipoDocumento.CEDULA_CIUDADANIA,
-    )
-    cedula = models.CharField(
-        max_length=20, db_index=True,
-        help_text="Número de documento de identidad.",
-    )
-
-    # ── Datos personales ────────────────────────────────────────────────────
+        max_length=5, choices=TipoDocumento.choices, default=TipoDocumento.CEDULA_CIUDADANIA)
+    cedula = models.CharField(max_length=20, db_index=True)
     nombre = models.CharField(max_length=200)
     apellido = models.CharField(max_length=200, blank=True, default="")
     email = models.EmailField(blank=True, default="", db_index=True)
     telefono = models.CharField(max_length=20, blank=True, default="")
-
-    # ── Vinculación con la app móvil ─────────────────────────────────────────
-    usuario_id = models.UUIDField(
-        null=True, blank=True, db_index=True,
-        help_text=(
-            "UUID del Usuario de la app móvil. "
-            "Si está vinculado, las ventas en tienda acreditan puntos al usuario."
-        ),
-    )
-
-    # ── Scope del restaurante ────────────────────────────────────────────────
-    restaurante_id = models.UUIDField(
-        null=True, blank=True, db_index=True,
-        help_text="UUID del restaurante que registró al cliente. NULL = cliente global.",
-    )
-
+    usuario_id = models.UUIDField(null=True, blank=True, db_index=True)
+    restaurante_id = models.UUIDField(null=True, blank=True, db_index=True)
     activo = models.BooleanField(default=True)
     notas = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -237,7 +199,6 @@ class Cliente(models.Model):
         verbose_name = "Cliente"
         verbose_name_plural = "Clientes"
         ordering = ["nombre", "apellido"]
-        # El mismo documento no puede repetirse en el mismo restaurante
         constraints = [
             models.UniqueConstraint(
                 fields=["tipo_documento", "cedula", "restaurante_id"],

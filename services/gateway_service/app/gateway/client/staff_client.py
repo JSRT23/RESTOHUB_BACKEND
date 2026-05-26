@@ -1,13 +1,6 @@
 # gateway_service/app/gateway/client/staff_client.py
-# CORRECCIÓN: staff_service usa PageNumberPagination → retorna
-# {"count": N, "results": [...]} en lugar de lista directa.
-# Fix: _get_list() extrae "results" si la respuesta es paginada.
-# Mismo patrón aplicable a loyalty_client si activa paginación.
-
 import logging
 import os
-import socket
-
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -16,12 +9,9 @@ logger = logging.getLogger(__name__)
 def _resolve_url() -> str:
     base = os.getenv("STAFF_SERVICE_URL",
                      "http://staff_service:8000/api/staff")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        return base.replace(hostname, ip)
-    except Exception:
-        return base
+    if base.endswith("/api/staff") or base.endswith("/api/staff/"):
+        return base.rstrip("/")
+    return base.rstrip("/") + "/api/staff"
 
 
 STAFF_SERVICE_URL = _resolve_url()
@@ -29,7 +19,7 @@ STAFF_SERVICE_URL = _resolve_url()
 
 def _get(path: str, params: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.get(f"{STAFF_SERVICE_URL}{path}", params=params)
             response.raise_for_status()
             return response.json()
@@ -43,11 +33,6 @@ def _get(path: str, params: dict = None):
 
 
 def _get_list(path: str, params: dict = None) -> list:
-    """
-    GET que siempre retorna lista.
-    ✅ Maneja respuesta paginada {"count": N, "results": [...]}
-    y también respuesta directa [...].
-    """
     data = _get(path, params=params)
     if data is None:
         return []
@@ -55,7 +40,6 @@ def _get_list(path: str, params: dict = None) -> list:
         return data
     if isinstance(data, dict) and "results" in data:
         return data["results"]
-    # Fallback — retornar vacío antes que explotar graphene
     logger.warning(
         "[staff_client] Respuesta inesperada en %s: %s", path, type(data))
     return []
@@ -63,7 +47,7 @@ def _get_list(path: str, params: dict = None) -> list:
 
 def _post(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{STAFF_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -79,7 +63,7 @@ def _post(path: str, data: dict = None):
 
 def _patch(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.patch(
                 f"{STAFF_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()

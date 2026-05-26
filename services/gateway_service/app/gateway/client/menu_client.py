@@ -1,7 +1,6 @@
 # gateway_service/app/gateway/client/menu_client.py
 import httpx
 import os
-import socket
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,24 +8,25 @@ logger = logging.getLogger(__name__)
 
 def _resolve_url() -> str:
     base = os.getenv("MENU_SERVICE_URL", "http://menu_service:8000/api/menu")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        resolved = base.replace(hostname, ip)
-        logger.info("[menu_client] URL resuelta: %s → %s", base, resolved)
-        return resolved
-    except Exception as e:
-        logger.warning("[menu_client] No se pudo resolver hostname: %s", e)
-        return base
+    if base.endswith("/api/menu") or base.endswith("/api/menu/"):
+        return base.rstrip("/")
+    return base.rstrip("/") + "/api/menu"
 
 
 MENU_SERVICE_URL = _resolve_url()
 
 
-def _get(path: str, params: dict = None):
+def _get(path: str, params: dict = None, token: str = None):
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        with httpx.Client(timeout=10) as client:
-            response = client.get(f"{MENU_SERVICE_URL}{path}", params=params)
+        with httpx.Client(timeout=10, verify=False) as client:
+            response = client.get(
+                f"{MENU_SERVICE_URL}{path}",
+                params=params or {},
+                headers=headers,
+            )
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
@@ -37,10 +37,17 @@ def _get(path: str, params: dict = None):
         return None
 
 
-def _post(path: str, data: dict) -> dict | None:
+def _post(path: str, data: dict, token: str = None) -> dict | None:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        with httpx.Client(timeout=10) as client:
-            response = client.post(f"{MENU_SERVICE_URL}{path}", json=data)
+        with httpx.Client(timeout=10, verify=False) as client:
+            response = client.post(
+                f"{MENU_SERVICE_URL}{path}",
+                json=data,
+                headers=headers,
+            )
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
@@ -51,10 +58,17 @@ def _post(path: str, data: dict) -> dict | None:
         return None
 
 
-def _patch(path: str, data: dict) -> dict | None:
+def _patch(path: str, data: dict, token: str = None) -> dict | None:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        with httpx.Client(timeout=10) as client:
-            response = client.patch(f"{MENU_SERVICE_URL}{path}", json=data)
+        with httpx.Client(timeout=10, verify=False) as client:
+            response = client.patch(
+                f"{MENU_SERVICE_URL}{path}",
+                json=data,
+                headers=headers,
+            )
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
@@ -65,10 +79,16 @@ def _patch(path: str, data: dict) -> dict | None:
         return None
 
 
-def _delete(path: str) -> bool:
+def _delete(path: str, token: str = None) -> bool:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        with httpx.Client(timeout=10) as client:
-            response = client.delete(f"{MENU_SERVICE_URL}{path}")
+        with httpx.Client(timeout=10, verify=False) as client:
+            response = client.delete(
+                f"{MENU_SERVICE_URL}{path}",
+                headers=headers,
+            )
             response.raise_for_status()
             return True
     except Exception as e:
@@ -143,11 +163,6 @@ def desactivar_categoria(id: str):
 # ── Ingrediente ────────────────────────────────────────────────────────────
 
 def get_ingredientes(activo=None, restaurante_id=None, disponibles=None):
-    """
-    disponibles=UUID → globales + del restaurante X (para el gerente)
-    restaurante_id=UUID → solo de ese restaurante
-    sin parámetro → todos (admin)
-    """
     params = {}
     if activo is not None:
         params["activo"] = activo
@@ -159,7 +174,6 @@ def get_ingredientes(activo=None, restaurante_id=None, disponibles=None):
 
 
 def crear_ingrediente(data: dict):
-    # data puede incluir "restaurante" (UUID del restaurante) o no (global)
     return _post("/ingredientes/", data)
 
 
@@ -178,11 +192,6 @@ def desactivar_ingrediente(id: str):
 # ── Plato ──────────────────────────────────────────────────────────────────
 
 def get_platos(activo=None, categoria_id=None, restaurante_id=None, disponibles=None):
-    """
-    disponibles=UUID → globales + del restaurante X (para el gerente)
-    restaurante_id=UUID → solo de ese restaurante
-    sin parámetro → todos (admin)
-    """
     params = {}
     if activo is not None:
         params["activo"] = activo
@@ -200,7 +209,6 @@ def get_plato(id: str):
 
 
 def crear_plato(data: dict):
-    # data puede incluir "restaurante" (UUID) o no (global)
     return _post("/platos/", data)
 
 

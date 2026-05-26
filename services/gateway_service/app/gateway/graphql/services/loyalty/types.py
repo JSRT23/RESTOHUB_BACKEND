@@ -1,5 +1,5 @@
-# gateway/graphql/services/loyalty/types.py
-# FIX: PromocionListType ahora incluye descripcion
+# gateway_service/app/gateway/graphql/services/loyalty/types.py
+# FIX: CuponType ahora incluye restaurante_id para distinguir globales de locales
 import graphene
 
 
@@ -68,7 +68,7 @@ class PromocionType(graphene.ObjectType):
 class PromocionListType(graphene.ObjectType):
     id = graphene.ID()
     nombre = graphene.String()
-    descripcion = graphene.String()   # ✅ agregado
+    descripcion = graphene.String()
     alcance = graphene.String()
     alcance_display = graphene.String()
     tipo_beneficio = graphene.String()
@@ -98,6 +98,7 @@ class CuponType(graphene.ObjectType):
     tipo_descuento_display = graphene.String()
     valor_descuento = graphene.String()
     cliente_id = graphene.ID()
+    restaurante_id = graphene.ID()   # ← FIX: campo nuevo
     promocion = graphene.ID()
     promocion_nombre = graphene.String()
     usos_actuales = graphene.Int()

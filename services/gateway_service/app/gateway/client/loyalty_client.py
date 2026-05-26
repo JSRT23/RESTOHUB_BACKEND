@@ -1,12 +1,6 @@
 # gateway_service/app/gateway/client/loyalty_client.py
-# CORRECCIÓN: loyalty_service usa PageNumberPagination → retorna
-# {"count": N, "results": [...]} en lugar de lista directa.
-# Fix: _get_list() extrae "results" si la respuesta es paginada.
-
 import logging
 import os
-import socket
-
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -15,12 +9,9 @@ logger = logging.getLogger(__name__)
 def _resolve_url() -> str:
     base = os.getenv("LOYALTY_SERVICE_URL",
                      "http://loyalty_service:8000/api/loyalty")
-    try:
-        hostname = base.split("//")[1].split(":")[0].split("/")[0]
-        ip = socket.gethostbyname(hostname)
-        return base.replace(hostname, ip)
-    except Exception:
-        return base
+    if base.endswith("/api/loyalty") or base.endswith("/api/loyalty/"):
+        return base.rstrip("/")
+    return base.rstrip("/") + "/api/loyalty"
 
 
 LOYALTY_SERVICE_URL = _resolve_url()
@@ -28,7 +19,7 @@ LOYALTY_SERVICE_URL = _resolve_url()
 
 def _get(path: str, params: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.get(
                 f"{LOYALTY_SERVICE_URL}{path}", params=params)
             response.raise_for_status()
@@ -43,11 +34,6 @@ def _get(path: str, params: dict = None):
 
 
 def _get_list(path: str, params: dict = None) -> list:
-    """
-    GET que siempre retorna lista.
-    Maneja respuesta paginada {"count": N, "results": [...]}
-    y también respuesta directa [...].
-    """
     data = _get(path, params=params)
     if data is None:
         return []
@@ -62,7 +48,7 @@ def _get_list(path: str, params: dict = None) -> list:
 
 def _post(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.post(
                 f"{LOYALTY_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -78,7 +64,7 @@ def _post(path: str, data: dict = None):
 
 def _patch(path: str, data: dict = None):
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=10, verify=False) as client:
             response = client.patch(
                 f"{LOYALTY_SERVICE_URL}{path}", json=data or {})
             response.raise_for_status()
@@ -97,7 +83,6 @@ def _patch(path: str, data: dict = None):
 # ---------------------------------------------------------------------------
 
 def get_cliente(cliente_id: str = None, telefono: str = None):
-    """Retorna un objeto cliente, no lista."""
     if cliente_id:
         return _get(f"/clientes/{cliente_id}/")
     if telefono:
@@ -111,7 +96,6 @@ def get_o_crear_cliente(telefono: str, nombre: str = None):
 
 
 def get_puntos(cliente_id: str):
-    """Retorna objeto con puntos actuales, no lista."""
     return _get(f"/clientes/{cliente_id}/puntos/")
 
 
@@ -135,13 +119,16 @@ def get_transacciones(cliente_id: str = None, restaurante_id: str = None,
     return _get_list("/transacciones/", params=params)
 
 
-def acumular_puntos(cliente_id: str, pedido_id: str, restaurante_id: str, monto: float):
-    return _post("/transacciones/acumular/", data={
-        "cliente_id": cliente_id,
-        "pedido_id": pedido_id,
-        "restaurante_id": restaurante_id,
-        "monto": monto,
-    })
+def acumular_puntos(data: dict):
+    return _post("/transacciones/acumular/", data=data)
+
+
+def canjear_puntos(data: dict):
+    return _post("/transacciones/canjear/", data=data)
+
+
+def get_transaccion(transaccion_id: str):
+    return _get(f"/transacciones/{transaccion_id}/")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +227,6 @@ def get_cupon(cupon_id: str):
 
 
 def validar_cupon(codigo: str):
-    """Valida cupón por código. Retorna el cupon si existe, None si no."""
     return _get("/cupones/validar/", params={"codigo": codigo})
 
 
@@ -256,24 +242,6 @@ def crear_cupon(data: dict):
 
 
 # ---------------------------------------------------------------------------
-# Puntos — mutaciones
-# ---------------------------------------------------------------------------
-
-def acumular_puntos(data: dict):
-    """Recibe dict con cliente_id, puntos, pedido_id, restaurante_id, descripcion."""
-    return _post("/transacciones/acumular/", data=data)
-
-
-def canjear_puntos(data: dict):
-    """Recibe dict con cliente_id, puntos, pedido_id, descripcion."""
-    return _post("/transacciones/canjear/", data=data)
-
-
-def get_transaccion(transaccion_id: str):
-    return _get(f"/transacciones/{transaccion_id}/")
-
-
-# ---------------------------------------------------------------------------
 # Historial de niveles
 # ---------------------------------------------------------------------------
 
@@ -282,8 +250,7 @@ def get_historial_niveles(cliente_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Catálogo (caché local de platos/categorías en loyalty_service)
-# _get_list() aplica automáticamente — resuelve el count/next/results
+# Catálogo
 # ---------------------------------------------------------------------------
 
 def get_catalogo_platos(activo: bool = None, categoria_id: str = None):

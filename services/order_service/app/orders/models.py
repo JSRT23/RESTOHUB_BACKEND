@@ -1,3 +1,7 @@
+# order_service/app/orders/models.py
+# FIX: Pedido ahora tiene total_cobrado para registrar el total real
+#      después de aplicar cupones/puntos de fidelidad.
+#      Después de reemplazar: makemigrations orders && migrate
 import uuid
 from django.db import models
 
@@ -54,10 +58,10 @@ class TipoEntrega(models.TextChoices):
 
 
 class EstadoEntrega(models.TextChoices):
-    PENDIENTE = "PENDIENTE",  "Pendiente"
-    EN_CAMINO = "EN_CAMINO",  "En Camino"
-    ENTREGADO = "ENTREGADO",  "Entregado"
-    FALLIDO = "FALLIDO",    "Fallido"
+    PENDIENTE = "PENDIENTE", "Pendiente"
+    EN_CAMINO = "EN_CAMINO", "En Camino"
+    ENTREGADO = "ENTREGADO", "Entregado"
+    FALLIDO = "FALLIDO",   "Fallido"
 
 
 class Pedido(models.Model):
@@ -71,21 +75,22 @@ class Pedido(models.Model):
     prioridad = models.IntegerField(
         choices=PrioridadPedido.choices, default=PrioridadPedido.NORMAL)
     total = models.DecimalField(max_digits=10, decimal_places=2)
-    moneda = models.CharField(max_length=10)
-    mesa_id = models.UUIDField(null=True, blank=True)
 
-    # ── NUEVO: método de pago registrado al cobrar ────────────────────────
-    metodo_pago = models.CharField(
-        max_length=20,
-        choices=MetodoPago.choices,
-        null=True,
-        blank=True,
+    # FIX: total real cobrado después de descuentos (cupones, puntos).
+    # null = sin descuentos aplicados → mostrar total normal.
+    # valor = total efectivamente cobrado al cliente.
+    total_cobrado = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text="Total real cobrado tras aplicar cupones/puntos. null = sin descuentos."
     )
 
+    moneda = models.CharField(max_length=10)
+    mesa_id = models.UUIDField(null=True, blank=True)
+    metodo_pago = models.CharField(
+        max_length=20, choices=MetodoPago.choices, null=True, blank=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_entrega_estimada = models.DateTimeField(null=True, blank=True)
-
-    # Número correlativo del día por restaurante (Pedido #1, #2... del día)
     numero_dia = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:

@@ -1,4 +1,5 @@
 # gateway_service/app/gateway/graphql/services/order/types.py
+# FIX: PedidoType ahora incluye total_cobrado
 import graphene
 
 
@@ -50,6 +51,7 @@ class PedidoType(graphene.ObjectType):
     estado = graphene.String()
     prioridad = graphene.Int()
     total = graphene.String()
+    total_cobrado = graphene.String()   # FIX: total real cobrado con descuentos
     moneda = graphene.String()
     mesa_id = graphene.ID()
     metodo_pago = graphene.String()
