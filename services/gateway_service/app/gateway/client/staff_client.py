@@ -55,10 +55,16 @@ def _post(path: str, data: dict = None):
     except httpx.HTTPStatusError as exc:
         logger.error("[staff_client] HTTP %s en POST %s",
                      exc.response.status_code, path)
-        return None
+        # ← NUEVO: retorna el detalle del error en vez de None
+        try:
+            body = exc.response.json()
+            return {"_error": True, "status": exc.response.status_code, **body}
+        except Exception:
+            return {"_error": True, "status": exc.response.status_code,
+                    "detail": exc.response.text or str(exc)}
     except Exception as exc:
         logger.error("[staff_client] Error en POST %s: %s", path, exc)
-        return None
+        return {"_error": True, "detail": str(exc)}
 
 
 def _patch(path: str, data: dict = None):
@@ -71,10 +77,15 @@ def _patch(path: str, data: dict = None):
     except httpx.HTTPStatusError as exc:
         logger.error("[staff_client] HTTP %s en PATCH %s",
                      exc.response.status_code, path)
-        return None
+        try:
+            body = exc.response.json()
+            return {"_error": True, "status": exc.response.status_code, **body}
+        except Exception:
+            return {"_error": True, "status": exc.response.status_code,
+                    "detail": exc.response.text or str(exc)}
     except Exception as exc:
         logger.error("[staff_client] Error en PATCH %s: %s", path, exc)
-        return None
+        return {"_error": True, "detail": str(exc)}
 
 
 # ---------------------------------------------------------------------------

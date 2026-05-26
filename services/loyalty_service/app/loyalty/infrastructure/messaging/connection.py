@@ -1,5 +1,6 @@
-# loyalty_service/app/loyalty/infrastructure/messaging/connection.py
+# order_service/app/*/infrastructure/messaging/connection.py
 import logging
+import ssl
 import threading
 
 import pika
@@ -12,16 +13,23 @@ _connection: pika.BlockingConnection | None = None
 
 
 def _build_parameters() -> pika.ConnectionParameters:
+    r = settings.RABBITMQ
+
+    credentials = pika.PlainCredentials(r["USER"], r["PASSWORD"])
+
+    ssl_options = None
+    if r.get("USE_SSL", False):
+        ssl_context = ssl.create_default_context()
+        ssl_options = pika.SSLOptions(ssl_context, r["HOST"])
+
     return pika.ConnectionParameters(
-        host=settings.RABBITMQ["HOST"],
-        port=settings.RABBITMQ["PORT"],
-        virtual_host=settings.RABBITMQ["VHOST"],
-        credentials=pika.PlainCredentials(
-            settings.RABBITMQ["USER"],
-            settings.RABBITMQ["PASSWORD"],
-        ),
+        host=r["HOST"],
+        port=r["PORT"],
+        virtual_host=r["VHOST"],
+        credentials=credentials,
         heartbeat=600,
         blocked_connection_timeout=300,
+        ssl_options=ssl_options,
     )
 
 
@@ -30,7 +38,7 @@ def get_rabbitmq_connection() -> pika.BlockingConnection:
 
     with _lock:
         if _connection is None or _connection.is_closed:
-            logger.info("🐇 Creando conexión a RabbitMQ (loyalty)...")
+            logger.info("🐇 Creando conexión a RabbitMQ (order)...")
             _connection = pika.BlockingConnection(_build_parameters())
             logger.info("✅ Conexión establecida")
 
