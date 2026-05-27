@@ -1,7 +1,8 @@
 # gateway_service/app/gateway/graphql/services/auth/queries.py
-# CAMBIO v2:
-#   - Nuevas queries: clientes, cliente, buscar_cliente.
-#   - resolve_me y resolve_usuarios sin cambios.
+# FIX: agrega resolver clientePorUsuarioId para que PerfilPage obtenga
+#      el Cliente.id vinculado al usuario logueado (sin hacer logout/login).
+# NUEVO: query crearSuperusuario movida a mutations, pero se agrega aquí
+#        el resolver de clientePorUsuarioId.
 
 import graphene
 from .types import ClienteType, UsuarioType
@@ -11,49 +12,32 @@ from ....client import auth_client
 
 class AuthQuery(graphene.ObjectType):
 
-    # ── Queries existentes ─────────────────────────────────────────────────
-    me = graphene.Field(
-        UsuarioType,
-        description="Retorna el perfil del usuario autenticado.",
-    )
-
+    me = graphene.Field(UsuarioType)
     usuarios = graphene.List(
         UsuarioType,
         rol=graphene.String(),
         activo=graphene.Boolean(),
         restaurante_id=graphene.ID(),
-        description="Lista todas las cuentas del sistema. Solo admin_central y gerente_local.",
     )
-
-    # ── NUEVO: Queries de Cliente ──────────────────────────────────────────
     clientes = graphene.List(
         ClienteType,
         restaurante_id=graphene.ID(),
         activo=graphene.Boolean(),
-        q=graphene.String(
-            description="Búsqueda libre: nombre, apellido, cédula, email."),
-        search=graphene.String(
-            description="Alias de q — búsqueda libre para el selector de cupones."),
-        description="Lista de clientes. Roles: cajero, gerente_local, admin_central.",
+        q=graphene.String(),
+        search=graphene.String(),
     )
-
-    cliente = graphene.Field(
-        ClienteType,
-        id=graphene.ID(required=True),
-        description="Detalle de un cliente por su UUID.",
-    )
-
+    cliente = graphene.Field(ClienteType, id=graphene.ID(required=True))
     buscar_cliente = graphene.List(
         ClienteType,
         cedula=graphene.String(required=True),
         restaurante_id=graphene.ID(),
-        description=(
-            "Busca clientes por cédula. Usado por el cajero en el TPV. "
-            "Retorna clientes del restaurante y/o clientes globales."
-        ),
     )
-
-    # ── Resolvers existentes ───────────────────────────────────────────────
+    # FIX: nuevo resolver para obtener el Cliente vinculado al usuario logueado
+    cliente_por_usuario_id = graphene.Field(
+        ClienteType,
+        usuario_id=graphene.ID(required=True),
+        description="Retorna el Cliente vinculado al usuario de la app. Usado por PerfilPage.",
+    )
 
     @require_auth
     def resolve_me(self, info):
@@ -75,62 +59,34 @@ class AuthQuery(graphene.ObjectType):
         if user.get("rol") not in ("admin_central", "gerente_local"):
             raise PermissionError(
                 "Solo admin_central y gerente_local pueden listar usuarios.")
-
         auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
         token = auth_header.split(
             " ", 1)[1] if auth_header.startswith("Bearer ") else ""
-
-        return auth_client.get_usuarios(
-            rol=rol, activo=activo,
-            restaurante_id=restaurante_id,
-            token=token,
-        )
-
-    # ── NUEVO: Resolvers de Cliente ────────────────────────────────────────
+        return auth_client.get_usuarios(rol=rol, activo=activo, restaurante_id=restaurante_id, token=token)
 
     @require_auth
     def resolve_clientes(self, info, restaurante_id=None, activo=None, q=None, search=None):
-        """
-        Búsqueda de clientes.
-        - gerente_local/cajero: reciben su restaurante_id del JWT para scope automático.
-          El auth_service devuelve clientes de ese restaurante + clientes globales.
-        - admin_central: ve todos; puede filtrar por restaurante_id si lo pasa.
-        - 'search' es alias de 'q' para compatibilidad con el selector del frontend.
-        """
         user = get_jwt_user(info)
         if user.get("rol") not in ("admin_central", "gerente_local", "cajero", "supervisor"):
             raise PermissionError("Sin permiso para listar clientes.")
-
         auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
         token = auth_header.split(
             " ", 1)[1] if auth_header.startswith("Bearer ") else ""
-
-        # search es alias de q
         texto = search or q
-
         params = {}
-
-        # Scope por restaurante:
-        # - admin_central usa el restaurante_id del argumento (o ninguno = ve todos)
-        # - gerente/cajero/supervisor: siempre pasan su restaurante_id del JWT
-        #   para que auth_service filtre clientes del restaurante + globales
         if user.get("rol") == "admin_central":
             if restaurante_id:
                 params["restaurante_id"] = restaurante_id
         else:
-            # El restaurante_id del JWT es el scope obligatorio
             jwt_restaurante = user.get("restaurante_id")
             if jwt_restaurante:
                 params["restaurante_id"] = str(jwt_restaurante)
-
         if activo is not None:
             params["activo"] = str(activo).lower()
         if texto:
             params["q"] = texto
-
         data = auth_client.get_autenticado(
-            "/clientes/", params=params, token=token
-        )
+            "/clientes/", params=params, token=token)
         if not data or isinstance(data, dict):
             return []
         return [_map_cliente(c) for c in data]
@@ -140,11 +96,9 @@ class AuthQuery(graphene.ObjectType):
         user = get_jwt_user(info)
         if user.get("rol") not in ("admin_central", "gerente_local", "cajero", "supervisor"):
             raise PermissionError("Sin permiso.")
-
         auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
         token = auth_header.split(
             " ", 1)[1] if auth_header.startswith("Bearer ") else ""
-
         data = auth_client.get_autenticado(f"/clientes/{id}/", token=token)
         if not data or data.get("_error"):
             return None
@@ -152,31 +106,37 @@ class AuthQuery(graphene.ObjectType):
 
     @require_auth
     def resolve_buscar_cliente(self, info, cedula, restaurante_id=None):
-        """
-        Búsqueda por cédula desde el TPV.
-        Si el cajero no especifica restaurante_id, se usa el suyo.
-        """
         user = get_jwt_user(info)
         if user.get("rol") not in ("admin_central", "gerente_local", "cajero"):
             raise PermissionError("Sin permiso para buscar clientes.")
-
         auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
         token = auth_header.split(
             " ", 1)[1] if auth_header.startswith("Bearer ") else ""
-
         params = {"cedula": cedula}
         rid = restaurante_id or user.get("restaurante_id")
         if rid:
             params["restaurante_id"] = str(rid)
-
         data = auth_client.get_autenticado(
             "/clientes/buscar/", params=params, token=token)
         if not data or isinstance(data, dict):
             return []
         return [_map_cliente(c) for c in data]
 
+    # FIX: resolver para obtener el Cliente del usuario logueado
+    # Llama a /mi-perfil-cliente/ — endpoint que solo requiere estar logueado,
+    # no requiere rol cajero/gerente. Usado por PerfilPage.
+    def resolve_cliente_por_usuario_id(self, info, usuario_id):
+        auth_header = info.context.META.get("HTTP_AUTHORIZATION", "")
+        token = auth_header.split(
+            " ", 1)[1] if auth_header.startswith("Bearer ") else ""
+        # Usar endpoint dedicado para clientes — no requiere rol especial
+        data = auth_client.get_autenticado("/mi-perfil-cliente/", token=token)
+        if not data or isinstance(data, dict) and data.get("_error"):
+            return None
+        if isinstance(data, dict) and data.get("id"):
+            return _map_cliente(data)
+        return None
 
-# ── Mapper ─────────────────────────────────────────────────────────────────
 
 def _map_cliente(d: dict) -> ClienteType:
     return ClienteType(

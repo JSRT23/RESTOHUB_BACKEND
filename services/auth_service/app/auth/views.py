@@ -1,37 +1,7 @@
 # auth_service/app/auth_app/views.py
-# FIX: LoginView ahora incluye cliente_id en la respuesta del usuario
-# para que el frontend lo guarde en rh_user y lo use en las queries de loyalty.
-# Solo se cambia el método post de LoginView — todo lo demás igual.
-# Busca el bloque de LoginView y reemplaza el return Response final:
-
-# ── ANTES ────────────────────────────────────────────────────────────────────
-#         return Response({
-#             "access_token":  access_token,
-#             "refresh_token": refresh_token_str,
-#             "token_type":    "Bearer",
-#             "expires_in":    3600,
-#             "usuario":       UsuarioSerializer(usuario).data,
-#         })
-
-# ── DESPUÉS ───────────────────────────────────────────────────────────────────
-#         # FIX: incluir cliente_id si el usuario tiene un Cliente vinculado
-#         usuario_data = UsuarioSerializer(usuario).data
-#         if usuario.rol == "cliente":
-#             cliente = Cliente.objects.filter(usuario_id=usuario.id, activo=True).first()
-#             if cliente:
-#                 usuario_data["cliente_id"] = str(cliente.id)
-#
-#         return Response({
-#             "access_token":  access_token,
-#             "refresh_token": refresh_token_str,
-#             "token_type":    "Bearer",
-#             "expires_in":    3600,
-#             "usuario":       usuario_data,
-#         })
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ARCHIVO COMPLETO CON EL FIX APLICADO:
-
+# FIX v2:
+#   - LoginView incluye cliente_id en la respuesta
+#   - ClienteListCreateView acepta filtro usuario_id
 import jwt
 from rest_framework import status
 from rest_framework.response import Response
@@ -70,10 +40,7 @@ class LoginView(APIView):
                 usuario_id=usuario.id, activo=True).exists()
             if not tiene_cliente:
                 return Response({
-                    "detail": (
-                        "Tu cuenta no tiene perfil de cliente activo. "
-                        "Contacta con el restaurante o vuelve a registrarte."
-                    ),
+                    "detail": "Tu cuenta no tiene perfil de cliente activo. Contacta con el restaurante o vuelve a registrarte.",
                     "codigo": "SIN_PERFIL_CLIENTE",
                 }, status=status.HTTP_403_FORBIDDEN)
 
@@ -82,8 +49,7 @@ class LoginView(APIView):
         RefreshToken.objects.create(
             usuario=usuario, token=refresh_token_str, expira_at=expira_at)
 
-        # FIX: incluir cliente_id en la respuesta para que el frontend
-        # lo guarde en rh_user y lo use en las queries de loyalty_service.
+        # FIX: incluir cliente_id para que el frontend lo use en loyalty queries
         usuario_data = UsuarioSerializer(usuario).data
         if usuario.rol == "cliente":
             cliente = Cliente.objects.filter(
@@ -115,10 +81,7 @@ class RefreshView(APIView):
             token=refresh_token_str, revocado=False).first()
         if not rt or not rt.usuario.activo:
             return Response({"detail": "Token inválido o revocado."}, status=status.HTTP_401_UNAUTHORIZED)
-        return Response({
-            "access_token": generar_access_token(rt.usuario),
-            "token_type":   "Bearer",
-        })
+        return Response({"access_token": generar_access_token(rt.usuario), "token_type": "Bearer"})
 
 
 class LogoutView(APIView):
@@ -166,9 +129,7 @@ class CambiarPasswordView(APIView):
 class BootstrapAdminView(APIView):
     def post(self, request):
         if Usuario.objects.filter(rol=Rol.ADMIN_CENTRAL).exists():
-            return Response(
-                {"detail": "El sistema ya tiene un administrador central configurado."},
-                status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "El sistema ya tiene un administrador central configurado."}, status=status.HTTP_400_BAD_REQUEST)
         email = request.data.get("email", "").strip().lower()
         nombre = request.data.get("nombre", "").strip()
         password = request.data.get("password", "")
@@ -240,7 +201,7 @@ class AutoRegistroView(APIView):
 
 class VerificarCodigoView(APIView):
     def post(self, request):
-        email = request.data.get("email",  "").strip().lower()
+        email = request.data.get("email", "").strip().lower()
         codigo = request.data.get("codigo", "").strip()
         if not email or not codigo:
             return Response({"detail": "email y codigo son requeridos."}, status=status.HTTP_400_BAD_REQUEST)
@@ -261,10 +222,7 @@ class VerificarCodigoView(APIView):
             return Response({"detail": "Demasiados intentos.", "codigo": "INTENTOS_AGOTADOS"}, status=status.HTTP_400_BAD_REQUEST)
         if codigo_obj.codigo != codigo:
             codigo_obj.registrar_intento_fallido()
-            return Response({
-                "detail": f"Código incorrecto. Te quedan {3-codigo_obj.intentos} intento(s).",
-                "codigo": "CODIGO_INCORRECTO", "intentos_restantes": 3-codigo_obj.intentos,
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": f"Código incorrecto. Te quedan {3-codigo_obj.intentos} intento(s).", "codigo": "CODIGO_INCORRECTO", "intentos_restantes": 3-codigo_obj.intentos}, status=status.HTTP_400_BAD_REQUEST)
         usuario.email_verificado = True
         usuario.save(update_fields=["email_verificado"])
         codigo_obj.delete()
@@ -461,18 +419,30 @@ class ClienteListCreateView(APIView):
         restaurante_id = request.query_params.get("restaurante_id")
         activo = request.query_params.get("activo")
         q = request.query_params.get("q")
+        usuario_id = request.query_params.get(
+            "usuario_id")  # FIX: filtro nuevo
+
         from django.db.models import Q as DQ
+
         scope = restaurante_id or (
             str(request.usuario.restaurante_id)
-            if request.usuario.restaurante_id and request.usuario.rol != Rol.ADMIN_CENTRAL else None)
-        if scope:
+            if request.usuario.restaurante_id and request.usuario.rol != Rol.ADMIN_CENTRAL
+            else None
+        )
+        # Si se filtra por usuario_id, no aplicar scope de restaurante
+        # (el cliente puede estar en cualquier restaurante)
+        if usuario_id:
+            qs = qs.filter(usuario_id=usuario_id)
+        elif scope:
             qs = qs.filter(DQ(restaurante_id=scope) |
                            DQ(restaurante_id__isnull=True))
+
         if activo is not None:
             qs = qs.filter(activo=activo.lower() == "true")
         if q:
             qs = qs.filter(DQ(nombre__icontains=q) | DQ(apellido__icontains=q) | DQ(
                 cedula__icontains=q) | DQ(email__icontains=q))
+
         return Response(ClienteListSerializer(qs.order_by("nombre", "apellido"), many=True).data)
 
     @requiere_rol(*ROLES_CLIENTES)
@@ -556,3 +526,20 @@ class DesvincularUsuarioClienteView(APIView):
         cliente.usuario_id = None
         cliente.save(update_fields=["usuario_id", "updated_at"])
         return Response({"ok": True, "message": "Vinculación eliminada."})
+
+
+class MiPerfilClienteView(APIView):
+    """
+    GET /api/auth/mi-perfil-cliente/
+    Retorna el Cliente vinculado al usuario autenticado.
+    Disponible para rol=cliente. No requiere rol de cajero/gerente.
+    Usado por PerfilPage para obtener el cliente_id sin hacer logout/login.
+    """
+    @requiere_auth
+    def get(self, request):
+        usuario = request.usuario
+        cliente = Cliente.objects.filter(
+            usuario_id=usuario.id, activo=True).first()
+        if not cliente:
+            return Response({"detail": "No tienes un perfil de cliente activo."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ClienteListSerializer(cliente).data)
