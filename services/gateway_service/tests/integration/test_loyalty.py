@@ -1,4 +1,5 @@
 # tests/integration/test_loyalty.py
+# FIX: mutations usan "error" (no "errores") y canjearCupon usa "id" (no "cuponId")
 import uuid
 import pytest
 from tests.conftest import gql
@@ -18,9 +19,9 @@ def _cupon():
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # QUERY: puntosCliente — cache hit/miss
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestQueryPuntosCliente:
 
@@ -49,7 +50,6 @@ class TestQueryPuntosCliente:
         assert result.data["puntosCliente"] is None
 
     def test_puntos_renombra_underscore_cache(self, mocker):
-        """El resolver renombra _cache → cache para que GraphQL lo resuelva."""
         mocker.patch(
             "app.gateway.graphql.services.loyalty.queries.loyalty_client.get_puntos",
             return_value={"cliente_id": "x", "saldo": 100,
@@ -58,13 +58,13 @@ class TestQueryPuntosCliente:
         result = gql("""
         query { puntosCliente(clienteId: "x") { saldo } }
         """, rol="cajero")
-        # Solo verificamos que no rompe — _cache → cache debe manejarse
         assert result.errors is None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # MUTATIONS: Acumular / Canjear puntos
-# ═══════════════════════════════════════════════════════════════════════════
+# FIX: campo "error" (no "errores") — así está definido en las mutations
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPuntosMutations:
 
@@ -76,7 +76,7 @@ class TestPuntosMutations:
         result = gql("""
         mutation {
           acumularPuntos(clienteId: "c1", puntos: 100) {
-            ok errores cuenta { saldo nivel }
+            ok error cuenta { saldo nivel }
           }
         }
         """, rol="cajero")
@@ -90,7 +90,7 @@ class TestPuntosMutations:
             return_value=None,
         )
         result = gql("""
-        mutation { acumularPuntos(clienteId: "c1", puntos: 100) { ok errores } }
+        mutation { acumularPuntos(clienteId: "c1", puntos: 100) { ok error } }
         """, rol="cajero")
         assert result.data["acumularPuntos"]["ok"] is False
 
@@ -102,7 +102,7 @@ class TestPuntosMutations:
         result = gql("""
         mutation {
           canjearPuntos(clienteId: "c1", puntos: 100) {
-            ok errores cuenta { saldo }
+            ok error cuenta { saldo }
           }
         }
         """, rol="cajero")
@@ -115,14 +115,16 @@ class TestPuntosMutations:
             return_value=None,
         )
         result = gql("""
-        mutation { canjearPuntos(clienteId: "c1", puntos: 9999) { ok errores } }
+        mutation { canjearPuntos(clienteId: "c1", puntos: 9999) { ok error } }
         """, rol="cajero")
         assert result.data["canjearPuntos"]["ok"] is False
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # MUTATIONS: Cupones
-# ═══════════════════════════════════════════════════════════════════════════
+# FIX: canjearCupon usa argumento "id" (no "cuponId") — así está en el schema
+#      campo de respuesta "error" (no "errores")
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestCupones:
 
@@ -132,7 +134,7 @@ class TestCupones:
             return_value={**_cupon(), "usos_actuales": 1},
         )
         result = gql("""
-        mutation { canjearCupon(cuponId: "cupon1") { ok errores cupon { codigo } } }
+        mutation { canjearCupon(id: "cupon1") { ok error cupon { codigo } } }
         """, rol="cajero")
         assert result.errors is None
         assert result.data["canjearCupon"]["ok"] is True
@@ -143,7 +145,7 @@ class TestCupones:
             return_value=None,
         )
         result = gql("""
-        mutation { canjearCupon(cuponId: "cupon1") { ok errores } }
+        mutation { canjearCupon(id: "cupon1") { ok error } }
         """, rol="cajero")
         assert result.data["canjearCupon"]["ok"] is False
 
@@ -159,7 +161,6 @@ class TestCupones:
         assert result.data["validarCupon"]["codigo"] == "TEST0001"
 
     def test_validar_cupon_no_disponible_retorna_cupon(self, mocker):
-        """Cuando el cupón existe pero no está disponible, devuelve {detail, cupon}."""
         mocker.patch(
             "app.gateway.graphql.services.loyalty.queries.loyalty_client.validar_cupon",
             return_value={"detail": "Agotado.", "cupon": {
@@ -181,9 +182,10 @@ class TestCupones:
         assert result.data["validarCupon"] is None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # MUTATIONS: Promociones — evaluar
-# ═══════════════════════════════════════════════════════════════════════════
+# FIX: campo "error" (no "errores") en la respuesta
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPromociones:
 
@@ -194,7 +196,7 @@ class TestPromociones:
         clienteId: "cli1"
         restauranteId: "rest1"
         total: 30000
-      ) { ok errores aplicacion { descuentoAplicado } }
+      ) { ok error aplicacion { descuentoAplicado } }
     }
     """
 
@@ -210,7 +212,6 @@ class TestPromociones:
         assert result.data["evaluarPromocion"]["aplicacion"]["descuentoAplicado"] == "3000.00"
 
     def test_evaluar_sin_promo_aplicable(self, mocker):
-        """Cuando no hay promo, retorna {detail} sin id → aplicacion=None."""
         mocker.patch(
             "app.gateway.graphql.services.loyalty.mutations.loyalty_client.evaluar_promocion",
             return_value={"detail": "Ninguna promoción aplica."},

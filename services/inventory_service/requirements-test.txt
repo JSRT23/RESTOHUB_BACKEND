@@ -1,3 +1,5 @@
+# Tests — inventory_service
+# Instalar con: pip install -r requirements-test.txt
 pytest
 pytest-django
 pytest-mock

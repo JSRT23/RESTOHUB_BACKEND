@@ -1,3 +1,5 @@
+# Tests — loyalty_service
+# Instalar con: pip install -r requirements-test.txt
 pytest==8.3.5
 pytest-django==4.9.0
 pytest-mock==3.14.0

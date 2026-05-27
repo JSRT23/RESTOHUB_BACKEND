@@ -2,7 +2,7 @@
 # POST /api/auth/login/
 # POST /api/auth/refresh/
 # POST /api/auth/logout/
-# POST /api/auth/verificar/
+# POST /api/auth/verificar-token/
 
 import pytest
 from django.urls import reverse
@@ -175,7 +175,6 @@ class TestLogoutView:
         ).exists()
 
     def test_logout_sin_refresh_token_igual_retorna_200(self, db, api_client, usuario_admin):
-        """Logout sin refresh_token es válido — solo cierra la sesión de access."""
         token = generar_access_token(usuario_admin)
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         res = api_client.post(self.URL, {})
@@ -186,7 +185,6 @@ class TestLogoutView:
         assert res.status_code == 401
 
     def test_logout_no_revoca_tokens_de_otro_usuario(self, db, api_client, usuario_admin):
-        """El logout solo revoca el RT del propio usuario, no el de otros."""
         otro = UsuarioFactory()
         token_otro_str, expira_at = generar_refresh_token(otro)
         rt_otro = RefreshToken.objects.create(
@@ -197,18 +195,18 @@ class TestLogoutView:
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_admin}")
         api_client.post(self.URL, {"refresh_token": token_otro_str})
 
-        # RT de otro usuario NO debe estar revocado
         rt_otro.refresh_from_db()
         assert rt_otro.revocado is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# VerificarTokenView  POST /api/auth/verificar/
+# VerificarTokenView  POST /api/auth/verificar-token/
+# FIX: URL corregida de /api/auth/verificar/ a /api/auth/verificar-token/
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestVerificarTokenView:
 
-    URL = "/api/auth/verificar/"
+    URL = "/api/auth/verificar-token/"   # ← FIX: nombre correcto en urls.py
 
     def test_token_valido_retorna_valido_true(self, db, api_client, usuario_admin):
         token = generar_access_token(usuario_admin)
