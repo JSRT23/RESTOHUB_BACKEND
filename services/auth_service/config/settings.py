@@ -132,23 +132,19 @@ SERVICE_NAME = "auth_service"
 
 EMAIL_BACKEND_CUSTOM = os.getenv("EMAIL_BACKEND", "gmail")
 
-# ── Brevo SMTP (producción en Render) ────────────────────────────────────
-# Registro gratis en brevo.com → SMTP & API → SMTP → generar clave SMTP
-BREVO_SMTP_USER = os.getenv("BREVO_SMTP_USER",     "")
-BREVO_SMTP_PASSWORD = os.getenv("BREVO_SMTP_PASSWORD", "")
+# ── Brevo API HTTP (producción en Render) ─────────────────────────────────
+# Brevo → SMTP y API → API Keys → crear nueva clave (empieza con xkeysib-)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY",      "")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "")
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME",  "RestoHub")
 
 # ── Gmail SMTP (desarrollo local) ────────────────────────────────────────
 EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-
-# EMAIL_FROM automático según backend
 EMAIL_FROM = os.getenv(
-    "EMAIL_FROM",
-    f"RestoHub <{os.getenv('BREVO_SMTP_USER', '')}>" if os.getenv("EMAIL_BACKEND") == "brevo"
-    else f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>"
-)
+    "EMAIL_FROM",          f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
 
 # ─────────────────────────────────────────
 # LOGGING

@@ -1,23 +1,23 @@
 # auth_service/app/auth/email_service.py
 #
-# Backends disponibles (configurar EMAIL_BACKEND en Render):
-#   brevo  → Brevo SMTP (producción — funciona en Render, gratis, sin dominio)
+# Backends:
+#   brevo  → Brevo API HTTP (producción — HTTP nunca bloqueado en Render)
 #   gmail  → Gmail SMTP (desarrollo local)
 #
-# Brevo: 300 emails/día gratis, no bloquea IPs de datacenter.
-# Registro: brevo.com → gratis, sin tarjeta.
+# Brevo API no usa SMTP — usa HTTPS hacia api.brevo.com:443
+# Render nunca bloquea HTTPS saliente.
 #
-# SETUP BREVO (5 minutos):
-#   1. brevo.com → crear cuenta gratis
-#   2. SMTP & API → SMTP → generar clave SMTP
-#   3. En Render agregar:
-#        EMAIL_BACKEND=brevo
-#        BREVO_SMTP_USER=tu@email.com   (el email con que te registraste)
-#        BREVO_SMTP_PASSWORD=xsmtpib-xxxxxxxxxxxx  (la clave SMTP generada)
-#        EMAIL_FROM=RestoHub <tu@email.com>
+# SETUP — vars en Render:
+#   EMAIL_BACKEND=brevo
+#   BREVO_API_KEY=xkeysib-xxxxxxxxxxxxxxxx   ← Brevo → SMTP y API → API Keys → crear
+#   BREVO_SENDER_EMAIL=claudecodepro10@gmail.com
+#   BREVO_SENDER_NAME=RestoHub
 
 import logging
 import datetime
+import json
+import urllib.request
+import urllib.error
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -31,48 +31,57 @@ def _send(to_email: str, subject: str, html: str) -> bool:
     backend = getattr(settings, "EMAIL_BACKEND_CUSTOM",
                       "gmail").lower().strip()
     if backend == "brevo":
-        return _send_brevo(to_email, subject, html)
+        return _send_brevo_api(to_email, subject, html)
     return _send_gmail(to_email, subject, html)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BACKEND BREVO — producción en Render
-# SMTP de Brevo usa smtp-relay.brevo.com:587 — no bloqueado por Render
+# BACKEND BREVO API — producción
+# Usa urllib (stdlib) — sin dependencias extra, solo HTTPS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _send_brevo(to_email: str, subject: str, html: str) -> bool:
-    import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
+def _send_brevo_api(to_email: str, subject: str, html: str) -> bool:
+    api_key = getattr(settings, "BREVO_API_KEY",      "")
+    sender_email = getattr(settings, "BREVO_SENDER_EMAIL", "")
+    sender_name = getattr(settings, "BREVO_SENDER_NAME",  "RestoHub")
 
-    host = "smtp-relay.brevo.com"
-    port = 587
-    user = getattr(settings, "BREVO_SMTP_USER",     "")
-    password = getattr(settings, "BREVO_SMTP_PASSWORD", "")
-    from_addr = getattr(settings, "EMAIL_FROM", f"RestoHub <{user}>")
-
-    if not user or not password:
+    if not api_key:
+        logger.error("[email/brevo] BREVO_API_KEY no configurado en Render.")
+        return False
+    if not sender_email:
         logger.error(
-            "[email/brevo] BREVO_SMTP_USER o BREVO_SMTP_PASSWORD no configurados en Render.")
+            "[email/brevo] BREVO_SENDER_EMAIL no configurado en Render.")
         return False
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = to_email
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    payload = json.dumps({
+        "sender":     {"name": sender_name, "email": sender_email},
+        "to":         [{"email": to_email}],
+        "subject":    subject,
+        "htmlContent": html,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "accept":       "application/json",
+            "content-type": "application/json",
+            "api-key":      api_key,
+        },
+        method="POST",
+    )
 
     try:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(user, password)
-            server.sendmail(user, [to_email], msg.as_string())
-        logger.info(f"[email/brevo] ✓ Enviado a {to_email}")
-        return True
-    except smtplib.SMTPAuthenticationError:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read())
+            msg_id = body.get("messageId", "")
+            logger.info(
+                f"[email/brevo] ✓ Enviado a {to_email} — messageId: {msg_id}")
+            return True
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
         logger.error(
-            "[email/brevo] Error de autenticación — verifica BREVO_SMTP_USER y BREVO_SMTP_PASSWORD.")
+            f"[email/brevo] HTTP {exc.code} enviando a {to_email}: {body}")
         return False
     except Exception as exc:
         logger.error(f"[email/brevo] Error enviando a {to_email}: {exc}")
@@ -80,7 +89,7 @@ def _send_brevo(to_email: str, subject: str, html: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BACKEND GMAIL — desarrollo local
+# BACKEND GMAIL SMTP — desarrollo local
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _send_gmail(to_email: str, subject: str, html: str) -> bool:
@@ -115,7 +124,7 @@ def _send_gmail(to_email: str, subject: str, html: str) -> bool:
         return True
     except smtplib.SMTPAuthenticationError:
         logger.error(
-            "[email/gmail] Error de autenticación — verifica el App Password de Gmail.")
+            "[email/gmail] Error de autenticación — verifica el App Password.")
         return False
     except Exception as exc:
         logger.error(f"[email/gmail] Error enviando a {to_email}: {exc}")
