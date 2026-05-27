@@ -131,26 +131,26 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://restohub-nine.vercel.app")
 
 # ─────────────────────────────────────────
 # EMAIL — mismo sistema que auth_service
-# Desarrollo  → EMAIL_BACKEND_CUSTOM=gmail  (por defecto)
-# Producción  → EMAIL_BACKEND_CUSTOM=resend (agregar en Render)
+# Desarrollo  → EMAIL_BACKEND=gmail  (por defecto)
+# Producción  → EMAIL_BACKEND=brevo  (agregar en Render)
 # ─────────────────────────────────────────
 EMAIL_BACKEND_CUSTOM = os.getenv("EMAIL_BACKEND", "gmail")
 
-# Resend (producción)
-RESEND_API_KEY = os.getenv("RESEND_API_KEY",   "")
-RESEND_FROM = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",  "")
-EMAIL_FROM = (
-    f"RestoHub <{RESEND_FROM}>"
-    if EMAIL_BACKEND_CUSTOM == "resend"
-    else os.getenv("EMAIL_FROM", f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
-)
+# Brevo SMTP (producción en Render)
+BREVO_SMTP_USER = os.getenv("BREVO_SMTP_USER",     "")
+BREVO_SMTP_PASSWORD = os.getenv("BREVO_SMTP_PASSWORD", "")
 
 # Gmail SMTP (desarrollo local)
 EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
+EMAIL_FROM = os.getenv(
+    "EMAIL_FROM",
+    f"RestoHub <{os.getenv('BREVO_SMTP_USER', '')}>" if os.getenv("EMAIL_BACKEND") == "brevo"
+    else f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>"
+)
 
 # ─────────────────────────────────────────
 # INTERNACIONALIZACIÓN

@@ -1,10 +1,20 @@
 # auth_service/app/auth/email_service.py
 #
-# Desarrollo  (EMAIL_BACKEND=gmail)  → Gmail SMTP con App Password
-# Producción  (EMAIL_BACKEND=resend) → Resend API (no bloqueado por Render)
+# Backends disponibles (configurar EMAIL_BACKEND en Render):
+#   brevo  → Brevo SMTP (producción — funciona en Render, gratis, sin dominio)
+#   gmail  → Gmail SMTP (desarrollo local)
 #
-# Mismo diseño de correo en ambos backends.
-# Interfaz pública sin cambios: enviar_codigo_verificacion() / enviar_bienvenida()
+# Brevo: 300 emails/día gratis, no bloquea IPs de datacenter.
+# Registro: brevo.com → gratis, sin tarjeta.
+#
+# SETUP BREVO (5 minutos):
+#   1. brevo.com → crear cuenta gratis
+#   2. SMTP & API → SMTP → generar clave SMTP
+#   3. En Render agregar:
+#        EMAIL_BACKEND=brevo
+#        BREVO_SMTP_USER=tu@email.com   (el email con que te registraste)
+#        BREVO_SMTP_PASSWORD=xsmtpib-xxxxxxxxxxxx  (la clave SMTP generada)
+#        EMAIL_FROM=RestoHub <tu@email.com>
 
 import logging
 import datetime
@@ -20,53 +30,52 @@ logger = logging.getLogger(__name__)
 def _send(to_email: str, subject: str, html: str) -> bool:
     backend = getattr(settings, "EMAIL_BACKEND_CUSTOM",
                       "gmail").lower().strip()
-    if backend == "resend":
-        return _send_resend(to_email, subject, html)
+    if backend == "brevo":
+        return _send_brevo(to_email, subject, html)
     return _send_gmail(to_email, subject, html)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BACKEND RESEND — producción en Render
+# BACKEND BREVO — producción en Render
+# SMTP de Brevo usa smtp-relay.brevo.com:587 — no bloqueado por Render
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _send_resend(to_email: str, subject: str, html: str) -> bool:
-    try:
-        import resend as resend_lib
-    except ImportError:
+def _send_brevo(to_email: str, subject: str, html: str) -> bool:
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    host = "smtp-relay.brevo.com"
+    port = 587
+    user = getattr(settings, "BREVO_SMTP_USER",     "")
+    password = getattr(settings, "BREVO_SMTP_PASSWORD", "")
+    from_addr = getattr(settings, "EMAIL_FROM", f"RestoHub <{user}>")
+
+    if not user or not password:
         logger.error(
-            "[email/resend] Paquete 'resend' no instalado — agregar a requirements.txt")
+            "[email/brevo] BREVO_SMTP_USER o BREVO_SMTP_PASSWORD no configurados en Render.")
         return False
 
-    api_key = getattr(settings, "RESEND_API_KEY",  "")
-    from_addr = getattr(settings, "EMAIL_FROM",
-                        "RestoHub <onboarding@resend.dev>")
-    reply_to = getattr(settings, "RESEND_REPLY_TO", "")
-
-    if not api_key:
-        logger.error("[email/resend] RESEND_API_KEY vacío en Render.")
-        return False
-
-    resend_lib.api_key = api_key
-
-    params = {
-        "from":    from_addr,
-        "to":      [to_email],
-        "subject": subject,
-        "html":    html,
-    }
-    if reply_to:
-        params["reply_to"] = reply_to
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:
-        resp = resend_lib.Emails.send(params)
-        if resp and resp.get("id"):
-            logger.info(
-                f"[email/resend] ✓ Enviado a {to_email} — id: {resp['id']}")
-            return True
-        logger.error(f"[email/resend] Respuesta inesperada: {resp}")
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(user, password)
+            server.sendmail(user, [to_email], msg.as_string())
+        logger.info(f"[email/brevo] ✓ Enviado a {to_email}")
+        return True
+    except smtplib.SMTPAuthenticationError:
+        logger.error(
+            "[email/brevo] Error de autenticación — verifica BREVO_SMTP_USER y BREVO_SMTP_PASSWORD.")
         return False
     except Exception as exc:
-        logger.error(f"[email/resend] Error enviando a {to_email}: {exc}")
+        logger.error(f"[email/brevo] Error enviando a {to_email}: {exc}")
         return False
 
 
@@ -114,7 +123,7 @@ def _send_gmail(to_email: str, subject: str, html: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEMPLATES HTML — mismo diseño en ambos backends
+# TEMPLATES HTML
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _html_codigo(nombre: str, codigo: str) -> str:
@@ -131,7 +140,6 @@ def _html_codigo(nombre: str, codigo: str) -> str:
     <table width="520" cellpadding="0" cellspacing="0"
            style="background:#fff;border-radius:20px;overflow:hidden;
                   box-shadow:0 4px 24px rgba(0,0,0,.08);">
-      <!-- Header verde -->
       <tr>
         <td style="background:#0a3828;padding:32px 40px;text-align:center;">
           <p style="margin:0 0 4px;font-size:11px;color:rgba(255,250,202,.6);
@@ -140,7 +148,6 @@ def _html_codigo(nombre: str, codigo: str) -> str:
                      font-weight:700;color:#fff;">Verifica tu correo</h1>
         </td>
       </tr>
-      <!-- Cuerpo -->
       <tr>
         <td style="padding:40px 40px 32px;">
           <p style="margin:0 0 20px;font-size:15px;color:#52524a;line-height:1.6;">
@@ -148,7 +155,6 @@ def _html_codigo(nombre: str, codigo: str) -> str:
             usa este código para activar tu cuenta.
             Expira en <strong>10 minutos</strong>.
           </p>
-          <!-- Código -->
           <div style="background:#f5f5ec;border:2px dashed rgba(10,56,40,.2);
                       border-radius:14px;padding:28px;text-align:center;margin:0 0 24px;">
             <p style="margin:0 0 6px;font-size:11px;color:#909088;
@@ -164,7 +170,6 @@ def _html_codigo(nombre: str, codigo: str) -> str:
           </p>
         </td>
       </tr>
-      <!-- Footer -->
       <tr>
         <td style="background:#f5f5ec;padding:20px 40px;
                    border-top:1px solid rgba(0,0,0,.06);">
@@ -193,7 +198,6 @@ def _html_bienvenida(nombre: str) -> str:
     <table width="520" cellpadding="0" cellspacing="0"
            style="background:#fff;border-radius:20px;overflow:hidden;
                   box-shadow:0 4px 24px rgba(0,0,0,.08);">
-      <!-- Header -->
       <tr>
         <td style="background:#0a3828;padding:32px 40px;text-align:center;">
           <h1 style="margin:0;font-family:Georgia,serif;font-size:26px;
@@ -202,7 +206,6 @@ def _html_bienvenida(nombre: str) -> str:
           </h1>
         </td>
       </tr>
-      <!-- Cuerpo -->
       <tr>
         <td style="padding:40px;">
           <p style="margin:0 0 16px;font-size:15px;color:#52524a;line-height:1.6;">
@@ -223,7 +226,6 @@ def _html_bienvenida(nombre: str) -> str:
           </div>
         </td>
       </tr>
-      <!-- Footer -->
       <tr>
         <td style="background:#f5f5ec;padding:20px 40px;
                    border-top:1px solid rgba(0,0,0,.06);">
@@ -239,7 +241,7 @@ def _html_bienvenida(nombre: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FUNCIONES PÚBLICAS — misma interfaz, nada más cambia en el resto del proyecto
+# FUNCIONES PÚBLICAS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def enviar_codigo_verificacion(usuario, codigo: str) -> bool:

@@ -126,30 +126,29 @@ SERVICE_NAME = "auth_service"
 
 # ─────────────────────────────────────────
 # EMAIL
-# Desarrollo  → EMAIL_BACKEND=gmail  (por defecto, usa Gmail SMTP)
-# Producción  → EMAIL_BACKEND=resend (Render, usar Resend API)
+# Desarrollo  → EMAIL_BACKEND=gmail  (por defecto)
+# Producción  → EMAIL_BACKEND=brevo  (Brevo SMTP, funciona en Render)
 # ─────────────────────────────────────────
 
-# Backend activo — en Render agregar: EMAIL_BACKEND=resend
 EMAIL_BACKEND_CUSTOM = os.getenv("EMAIL_BACKEND", "gmail")
 
-# ── Resend (producción) ───────────────────────────────────────────────────
-RESEND_API_KEY = os.getenv("RESEND_API_KEY",   "")
-RESEND_FROM = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",  "")
-
-# EMAIL_FROM usa RESEND_FROM_EMAIL en prod y Gmail en dev de forma automática
-EMAIL_FROM = (
-    f"RestoHub <{RESEND_FROM}>"
-    if EMAIL_BACKEND_CUSTOM == "resend"
-    else os.getenv("EMAIL_FROM", f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
-)
+# ── Brevo SMTP (producción en Render) ────────────────────────────────────
+# Registro gratis en brevo.com → SMTP & API → SMTP → generar clave SMTP
+BREVO_SMTP_USER = os.getenv("BREVO_SMTP_USER",     "")
+BREVO_SMTP_PASSWORD = os.getenv("BREVO_SMTP_PASSWORD", "")
 
 # ── Gmail SMTP (desarrollo local) ────────────────────────────────────────
 EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
+# EMAIL_FROM automático según backend
+EMAIL_FROM = os.getenv(
+    "EMAIL_FROM",
+    f"RestoHub <{os.getenv('BREVO_SMTP_USER', '')}>" if os.getenv("EMAIL_BACKEND") == "brevo"
+    else f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>"
+)
 
 # ─────────────────────────────────────────
 # LOGGING

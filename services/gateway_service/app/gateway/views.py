@@ -26,11 +26,11 @@ def _send_email(to_email: str, subject: str, html: str) -> bool:
     backend = getattr(settings, "EMAIL_BACKEND_CUSTOM",
                       "gmail").lower().strip()
     if backend == "resend":
-        return _send_resend(to_email, subject, html)
+        return _send_brevo_smtp(to_email, subject, html)
     return _send_gmail(to_email, subject, html)
 
 
-def _send_resend(to_email: str, subject: str, html: str) -> bool:
+def _send_brevo_smtp(to_email: str, subject: str, html: str) -> bool:
     try:
         import resend as resend_lib
     except ImportError:
