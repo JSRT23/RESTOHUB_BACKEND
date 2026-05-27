@@ -1,29 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# RestoHub — Backend CI/CD
-# Repo  : JSRT23/RESTOHUB_BACKEND
-# Rama  : juan-backend
-#
-# SECRETS a configurar en GitHub
-# (Settings → Secrets and variables → Actions → New repository secret):
-#
-#   RENDER_API_KEY_AUTH        rnd_6p3CopZQqTnb1iA47zIf8HZT91IS
-#   RENDER_API_KEY_MENU        rnd_IaSxu7jyoDsrdTok7QvL3havZuQW
-#   RENDER_API_KEY_ORDER       rnd_etPtrbOwQqif0IRGJQ4UCjbOcVF0
-#   RENDER_API_KEY_INVENTORY   rnd_Rr5Y1aUsU8SS87K1drRKhfDYJ5zR
-#   RENDER_API_KEY_LOYALTY     rnd_lVIY0llxU9ZYBp4WlTHQsdMsYPd2
-#   RENDER_API_KEY_STAFF       rnd_lPcOVzuuBBxKtFWB9cFHN6ze9T9z
-#   RENDER_API_KEY_GATEWAY     rnd_ujlbntv3RBF2sC9g9Mo6SPRp25ud
-#
-#   RENDER_AUTH_SERVICE_ID      srv-d80gu1mgvqtc73dhlql0
-#   RENDER_MENU_SERVICE_ID      srv-d80di8ho3t8c73dlu730
-#   RENDER_ORDER_SERVICE_ID     srv-d80f6s7aqgkc73a30h60
-#   RENDER_INVENTORY_SERVICE_ID srv-d80evk1o3t8c73dn5kg0
-#   RENDER_LOYALTY_SERVICE_ID   srv-d80hhhreo5us73fhq9r0
-#   RENDER_STAFF_SERVICE_ID     srv-d80elf6gvqtc73dfoaog
-#   RENDER_GATEWAY_SERVICE_ID   srv-d80h6jl0lvsc738naqu0
-#
-# ─────────────────────────────────────────────────────────────────────────────
-
 name: Backend CI/CD
 
 on:
@@ -40,7 +14,6 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  # ── Lint ──────────────────────────────────────────────────────────────────
   lint:
     name: "Lint"
     runs-on: ubuntu-latest
@@ -50,14 +23,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install flake8
-      - name: flake8 — solo errores críticos
+      - name: flake8
         run: |
           flake8 services/ \
             --select=E9,F63,F7,F82 \
             --exclude=migrations,__pycache__,.venv \
             --show-source --statistics
 
-  # ── auth_service ──────────────────────────────────────────────────────────
   test-auth:
     name: "Test auth_service"
     runs-on: ubuntu-latest
@@ -77,14 +49,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/auth_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── menu_service ──────────────────────────────────────────────────────────
   test-menu:
     name: "Test menu_service"
     runs-on: ubuntu-latest
@@ -103,14 +70,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/menu_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── order_service ─────────────────────────────────────────────────────────
   test-order:
     name: "Test order_service"
     runs-on: ubuntu-latest
@@ -129,14 +91,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/order_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── inventory_service ─────────────────────────────────────────────────────
   test-inventory:
     name: "Test inventory_service"
     runs-on: ubuntu-latest
@@ -155,14 +112,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/inventory_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── loyalty_service ───────────────────────────────────────────────────────
   test-loyalty:
     name: "Test loyalty_service"
     runs-on: ubuntu-latest
@@ -181,14 +133,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/loyalty_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── staff_service ─────────────────────────────────────────────────────────
   test-staff:
     name: "Test staff_service"
     runs-on: ubuntu-latest
@@ -207,14 +154,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/staff_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── gateway_service ───────────────────────────────────────────────────────
   test-gateway:
     name: "Test gateway_service"
     runs-on: ubuntu-latest
@@ -234,29 +176,25 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/gateway_service/requirements.txt
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-      - name: Test
-        run: pytest --tb=short -q
+      - run: pip install -r requirements.txt && pip install -r requirements-test.txt
+      - run: pytest --tb=short -q
 
-  # ── Gate ──────────────────────────────────────────────────────────────────
   all-tests-passed:
     name: "Todos los tests OK"
     runs-on: ubuntu-latest
     needs:
-      - test-auth
-      - test-menu
-      - test-order
-      - test-inventory
-      - test-loyalty
-      - test-staff
-      - test-gateway
+      [
+        test-auth,
+        test-menu,
+        test-order,
+        test-inventory,
+        test-loyalty,
+        test-staff,
+        test-gateway,
+      ]
     steps:
       - run: echo "Todos los tests pasaron"
 
-  # ── Deploy — cada servicio usa su propio API Key ──────────────────────────
   deploy:
     name: "Deploy a Render"
     runs-on: ubuntu-latest
@@ -265,64 +203,77 @@ jobs:
     steps:
       - name: Deploy auth_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_AUTH }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_AUTH_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_AUTH_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy menu_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_MENU }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_MENU_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_MENU_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy order_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_ORDER }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_ORDER_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_ORDER_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy inventory_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_INVENTORY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_INVENTORY_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_INVENTORY_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy loyalty_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_LOYALTY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_LOYALTY_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_LOYALTY_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy staff_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_STAFF }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_STAFF_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_STAFF_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy gateway_service
         run: |
-          curl -sf -X POST \
+          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_GATEWAY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys"
+            "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys")
+          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
+          if [ "$RESP" -ge 400 ]; then exit 1; fi
 
       - name: Deploy completado
         run: echo "Deploy exitoso — ${{ github.sha }} por ${{ github.actor }}"
 
-  # ── Monitoreo — verifica que Grafana Cloud recibe métricas ───────────────
   monitoreo:
     name: "Verificar monitoreo Grafana"
     runs-on: ubuntu-latest
@@ -332,72 +283,52 @@ jobs:
       - name: Esperar que los servicios levanten
         run: sleep 60
 
-      - name: Verificar métricas en Grafana Cloud
+      - name: Verificar Grafana Cloud
         run: |
-          echo "Consultando Grafana Cloud Prometheus..."
-
-          # Consulta: ¿hay series activas de django en los últimos 10 minutos?
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=up" \
-            2>&1)
-
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=up")
           if echo "$RESP" | grep -q '"status":"success"'; then
-            echo "✅ Grafana Cloud responde correctamente"
+            echo "✅ Grafana Cloud OK"
           else
-            echo "⚠️  No se pudo consultar Grafana Cloud: $RESP"
+            echo "⚠️  Grafana no responde: $RESP"
             exit 1
           fi
 
-      - name: Verificar que django-prometheus reporta métricas
+      - name: Verificar métricas Django
         run: |
-          # Consulta si hay métricas django_http_requests_total en los últimos 15 min
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total" \
-            2>&1)
-
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total")
           if echo "$RESP" | grep -q '"result":\[\]'; then
-            echo "⚠️  Sin métricas django_http_requests_total — Alloy puede estar iniciando"
+            echo "⚠️  Sin métricas Django aún — Alloy puede estar iniciando"
           elif echo "$RESP" | grep -q '"status":"success"'; then
             COUNT=$(echo "$RESP" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          results = data.get('data', {}).get('result', [])
-          print(len(results))
+          import sys,json
+          d=json.load(sys.stdin)
+          print(len(d.get('data',{}).get('result',[])))
           " 2>/dev/null || echo "0")
-            echo "✅ Métricas Django activas — $COUNT series encontradas"
-          else
-            echo "⚠️  Respuesta inesperada de Grafana: $RESP"
+            echo "✅ Métricas Django activas — $COUNT series"
           fi
 
-      - name: Verificar targets UP en Alloy
+      - name: Verificar targets UP
         run: |
-          # Cuenta cuántos servicios están reportando métricas (job="alloy" o similar)
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=count(up)" \
-            2>&1)
-
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=count(up)")
           if echo "$RESP" | grep -q '"status":"success"'; then
             TOTAL=$(echo "$RESP" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          results = data.get('data', {}).get('result', [])
-          if results:
-              print(results[0].get('value', [None, '0'])[1])
-          else:
-              print('0')
+          import sys,json
+          d=json.load(sys.stdin)
+          r=d.get('data',{}).get('result',[])
+          print(r[0].get('value',[None,'0'])[1] if r else '0')
           " 2>/dev/null || echo "0")
-            echo "✅ Targets activos en Grafana Cloud: $TOTAL"
-          else
-            echo "⚠️  No se pudo consultar targets: $RESP"
+            echo "✅ Targets activos: $TOTAL"
           fi
 
-      - name: Resumen monitoreo
+      - name: Resumen
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Monitoreo RestoHub verificado"
           echo "  Grafana: https://restohub.grafana.net"
           echo "  Alloy:   https://restohub-alloy.onrender.com"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
