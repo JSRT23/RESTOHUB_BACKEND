@@ -203,73 +203,59 @@ jobs:
     steps:
       - name: Deploy auth_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_AUTH }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_AUTH_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "auth → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy menu_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_MENU }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_MENU_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "menu → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy order_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_ORDER }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_ORDER_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "order → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy inventory_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_INVENTORY }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_INVENTORY_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "inventory → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy loyalty_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_LOYALTY }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_LOYALTY_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "loyalty → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy staff_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_STAFF }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_STAFF_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "staff → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy gateway_service
         run: |
-          RESP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+          RESP=$(curl -s -o /tmp/r.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_GATEWAY }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys")
-          echo "HTTP $RESP: $(cat /tmp/resp.txt)"
-          if [ "$RESP" -ge 400 ]; then exit 1; fi
+          echo "gateway → HTTP $RESP: $(cat /tmp/r.txt)"
+          [ "$RESP" -lt 400 ]
 
       - name: Deploy completado
         run: echo "Deploy exitoso — ${{ github.sha }} por ${{ github.actor }}"
@@ -301,7 +287,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
             "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total")
           if echo "$RESP" | grep -q '"result":\[\]'; then
-            echo "⚠️  Sin métricas Django aún — Alloy puede estar iniciando"
+            echo "⚠️  Sin métricas Django aún"
           elif echo "$RESP" | grep -q '"status":"success"'; then
             COUNT=$(echo "$RESP" | python3 -c "
           import sys,json
