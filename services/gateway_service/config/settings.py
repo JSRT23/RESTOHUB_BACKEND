@@ -34,9 +34,7 @@ INSTALLED_APPS = [
     "app.gateway",
 ]
 
-GRAPHENE = {
-    "SCHEMA": "app.gateway.graphql.schema.schema"
-}
+GRAPHENE = {"SCHEMA": "app.gateway.graphql.schema.schema"}
 
 # ─────────────────────────────────────────
 # MIDDLEWARE
@@ -56,6 +54,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "config.urls"
+WSGI_APPLICATION = "config.wsgi.application"
 
 TEMPLATES = [
     {
@@ -72,8 +71,6 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "config.wsgi.application"
-
 # ─────────────────────────────────────────
 # CORS
 # ─────────────────────────────────────────
@@ -86,7 +83,6 @@ CORS_ALLOWED_ORIGINS = [
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 # ─────────────────────────────────────────
@@ -95,7 +91,7 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
+        "NAME":   ":memory:",
     }
 }
 
@@ -120,21 +116,41 @@ STAFF_SERVICE_URL = os.getenv(
 INVENTORY_SERVICE_URL = os.getenv(
     "INVENTORY_SERVICE_URL", "http://inventory_service:8000")
 LOYALTY_SERVICE_URL = os.getenv(
-    "LOYALTY_SERVICE_URL",   "http://loyalty_service:8000")
+    "LOYALTY_SERVICE_URL",  "http://loyalty_service:8000")
 
 # ─────────────────────────────────────────
 # MERCADOPAGO
 # ─────────────────────────────────────────
-MP_ACCESS_TOKEN = os.getenv(
-    "MP_ACCESS_TOKEN",
-    "APP_USR-6165213885065990-051916-28283da5669849f0279aa180a5cf49a8-3386877776"
+MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "")
+MP_PUBLIC_KEY = os.getenv("MP_PUBLIC_KEY",   "")
+
+# FIX: default a Vercel, no a localhost
+# En Render ya tienes MP_ACCESS_TOKEN y MP_PUBLIC_KEY configurados
+# Agregar también: FRONTEND_URL=https://restohub-nine.vercel.app
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://restohub-nine.vercel.app")
+
+# ─────────────────────────────────────────
+# EMAIL — mismo sistema que auth_service
+# Desarrollo  → EMAIL_BACKEND_CUSTOM=gmail  (por defecto)
+# Producción  → EMAIL_BACKEND_CUSTOM=resend (agregar en Render)
+# ─────────────────────────────────────────
+EMAIL_BACKEND_CUSTOM = os.getenv("EMAIL_BACKEND", "gmail")
+
+# Resend (producción)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY",   "")
+RESEND_FROM = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",  "")
+EMAIL_FROM = (
+    f"RestoHub <{RESEND_FROM}>"
+    if EMAIL_BACKEND_CUSTOM == "resend"
+    else os.getenv("EMAIL_FROM", f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
 )
-MP_PUBLIC_KEY = os.getenv(
-    "MP_PUBLIC_KEY",
-    "APP_USR-0370d09a-80df-4283-bb71-115617ca2642"
-)
-# URL base del frontend — usada en las URLs de retorno de MP
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5175")
+
+# Gmail SMTP (desarrollo local)
+EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 
 # ─────────────────────────────────────────
 # INTERNACIONALIZACIÓN
@@ -159,18 +175,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {
-        "console": {"class": "logging.StreamHandler"},
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
-        "django.request": {
-            "handlers":  ["console"],
-            "level":     "ERROR",
-            "propagate": False,
-        },
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
     },
 }

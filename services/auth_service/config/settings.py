@@ -21,7 +21,7 @@ JWT_SECRET_KEY = os.getenv(
     "JWT_SECRET_KEY", "restohub-jwt-secret-change-in-prod")
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_LIFETIME_MINUTES = int(os.getenv("JWT_ACCESS_MINUTES", "60"))
-JWT_REFRESH_TOKEN_LIFETIME_DAYS = int(os.getenv("JWT_REFRESH_DAYS", "7"))
+JWT_REFRESH_TOKEN_LIFETIME_DAYS = int(os.getenv("JWT_REFRESH_DAYS",   "7"))
 
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
@@ -59,6 +59,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "config.urls"
+WSGI_APPLICATION = "config.wsgi.application"
 
 TEMPLATES = [
     {
@@ -75,8 +76,6 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "config.wsgi.application"
-
 # ─────────────────────────────────────────
 # BASE DE DATOS
 # ─────────────────────────────────────────
@@ -88,9 +87,7 @@ DATABASES = {
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "restohub")),
         "HOST":     os.getenv("POSTGRES_HOST",     os.getenv("DB_HOST",     "postgres")),
         "PORT":     os.getenv("POSTGRES_PORT",     os.getenv("DB_PORT",     "5432")),
-        "OPTIONS": {
-            "sslmode": os.getenv("POSTGRES_SSLMODE", "require"),
-        } if not DEBUG else {},
+        "OPTIONS": {"sslmode": os.getenv("POSTGRES_SSLMODE", "require")} if not DEBUG else {},
     }
 }
 
@@ -125,18 +122,34 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
 SERVICE_NAME = "auth_service"
 
 # ─────────────────────────────────────────
-# EMAIL — Gmail SMTP
+# EMAIL
+# Desarrollo  → EMAIL_BACKEND=gmail  (por defecto, usa Gmail SMTP)
+# Producción  → EMAIL_BACKEND=resend (Render, usar Resend API)
 # ─────────────────────────────────────────
+
+# Backend activo — en Render agregar: EMAIL_BACKEND=resend
+EMAIL_BACKEND_CUSTOM = os.getenv("EMAIL_BACKEND", "gmail")
+
+# ── Resend (producción) ───────────────────────────────────────────────────
+RESEND_API_KEY = os.getenv("RESEND_API_KEY",   "")
+RESEND_FROM = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO",  "")
+
+# EMAIL_FROM usa RESEND_FROM_EMAIL en prod y Gmail en dev de forma automática
+EMAIL_FROM = (
+    f"RestoHub <{RESEND_FROM}>"
+    if EMAIL_BACKEND_CUSTOM == "resend"
+    else os.getenv("EMAIL_FROM", f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
+)
+
+# ── Gmail SMTP (desarrollo local) ────────────────────────────────────────
 EMAIL_HOST = os.getenv("EMAIL_HOST",          "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT",      "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER",     "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_FROM = os.getenv(
-    "EMAIL_FROM",          f"RestoHub <{os.getenv('EMAIL_HOST_USER', '')}>")
 
 # ─────────────────────────────────────────
 # LOGGING
