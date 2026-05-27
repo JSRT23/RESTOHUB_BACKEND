@@ -1,0 +1,319 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# RestoHub — Backend CI/CD
+# Repo  : JSRT23/RESTOHUB_BACKEND
+# Rama  : juan-backend
+#
+# FLUJO:
+#   Cualquier push/PR  →  Lint + 7 tests en paralelo (SQLite en memoria)
+#   Push a juan-backend + todos los tests pasan  →  Deploy a los 7 servicios en Render
+#
+# SECRETS requeridos  (GitHub → Settings → Secrets and variables → Actions):
+#   RENDER_API_KEY
+#   RENDER_AUTH_SERVICE_ID
+#   RENDER_MENU_SERVICE_ID
+#   RENDER_ORDER_SERVICE_ID
+#   RENDER_INVENTORY_SERVICE_ID
+#   RENDER_LOYALTY_SERVICE_ID
+#   RENDER_STAFF_SERVICE_ID
+#   RENDER_GATEWAY_SERVICE_ID
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Backend CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [juan-backend]
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+
+# ═════════════════════════════════════════════════════════════════════════════
+jobs:
+
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install flake8
+      - name: flake8 — solo errores críticos
+        run: |
+          flake8 services/ \
+            --select=E9,F63,F7,F82 \
+            --exclude=migrations,__pycache__,.venv \
+            --show-source --statistics
+
+  # ── auth_service ──────────────────────────────────────────────────────────
+  test-auth:
+    name: "Test auth_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/auth_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      JWT_SECRET_KEY: ci-jwt-secret
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/auth_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── menu_service ──────────────────────────────────────────────────────────
+  test-menu:
+    name: "Test menu_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/menu_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/menu_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── order_service ─────────────────────────────────────────────────────────
+  test-order:
+    name: "Test order_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/order_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/order_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── inventory_service ─────────────────────────────────────────────────────
+  test-inventory:
+    name: "Test inventory_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/inventory_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/inventory_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── loyalty_service ───────────────────────────────────────────────────────
+  test-loyalty:
+    name: "Test loyalty_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/loyalty_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/loyalty_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── staff_service ─────────────────────────────────────────────────────────
+  test-staff:
+    name: "Test staff_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/staff_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/staff_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── gateway_service ───────────────────────────────────────────────────────
+  test-gateway:
+    name: "Test gateway_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/gateway_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      JWT_SECRET_KEY: ci-jwt-secret
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/gateway_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── Gate — todos los tests deben pasar ────────────────────────────────────
+  all-tests-passed:
+    name: "Todos los tests OK"
+    runs-on: ubuntu-latest
+    needs:
+      - test-auth
+      - test-menu
+      - test-order
+      - test-inventory
+      - test-loyalty
+      - test-staff
+      - test-gateway
+    steps:
+      - run: echo "Todos los tests pasaron"
+
+  # ── Deploy a Render ───────────────────────────────────────────────────────
+  deploy:
+    name: "Deploy a Render"
+    runs-on: ubuntu-latest
+    needs: all-tests-passed
+    if: github.ref == 'refs/heads/juan-backend' && github.event_name == 'push'
+    steps:
+      - name: Deploy auth_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_AUTH_SERVICE_ID }}/deploys"
+
+      - name: Deploy menu_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_MENU_SERVICE_ID }}/deploys"
+
+      - name: Deploy order_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_ORDER_SERVICE_ID }}/deploys"
+
+      - name: Deploy inventory_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_INVENTORY_SERVICE_ID }}/deploys"
+
+      - name: Deploy loyalty_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_LOYALTY_SERVICE_ID }}/deploys"
+
+      - name: Deploy staff_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_STAFF_SERVICE_ID }}/deploys"
+
+      - name: Deploy gateway_service
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys"
+
+      - name: Deploy completado
+        run: echo "Deploy exitoso — ${{ github.sha }} por ${{ github.actor }}"
