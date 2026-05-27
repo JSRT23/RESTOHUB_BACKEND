@@ -273,7 +273,7 @@ jobs:
         run: |
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=up")
+            "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=up")
           if echo "$RESP" | grep -q '"status":"success"'; then
             echo "✅ Grafana Cloud OK"
           else
@@ -285,7 +285,7 @@ jobs:
         run: |
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total")
+            "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total")
           if echo "$RESP" | grep -q '"result":\[\]'; then
             echo "⚠️  Sin métricas Django aún"
           elif echo "$RESP" | grep -q '"status":"success"'; then
@@ -301,7 +301,7 @@ jobs:
         run: |
           RESP=$(curl -sf \
             -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
-            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=count(up)")
+            "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=count(up)")
           if echo "$RESP" | grep -q '"status":"success"'; then
             TOTAL=$(echo "$RESP" | python3 -c "
           import sys,json
