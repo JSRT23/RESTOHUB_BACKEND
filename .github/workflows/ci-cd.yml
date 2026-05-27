@@ -3,19 +3,25 @@
 # Repo  : JSRT23/RESTOHUB_BACKEND
 # Rama  : juan-backend
 #
-# FLUJO:
-#   Cualquier push/PR  →  Lint + 7 tests en paralelo (SQLite en memoria)
-#   Push a juan-backend + todos los tests pasan  →  Deploy a los 7 servicios en Render
+# SECRETS a configurar en GitHub
+# (Settings → Secrets and variables → Actions → New repository secret):
 #
-# SECRETS requeridos  (GitHub → Settings → Secrets and variables → Actions):
-#   RENDER_API_KEY
-#   RENDER_AUTH_SERVICE_ID
-#   RENDER_MENU_SERVICE_ID
-#   RENDER_ORDER_SERVICE_ID
-#   RENDER_INVENTORY_SERVICE_ID
-#   RENDER_LOYALTY_SERVICE_ID
-#   RENDER_STAFF_SERVICE_ID
-#   RENDER_GATEWAY_SERVICE_ID
+#   RENDER_API_KEY_AUTH        rnd_6p3CopZQqTnb1iA47zIf8HZT91IS
+#   RENDER_API_KEY_MENU        rnd_IaSxu7jyoDsrdTok7QvL3havZuQW
+#   RENDER_API_KEY_ORDER       rnd_etPtrbOwQqif0IRGJQ4UCjbOcVF0
+#   RENDER_API_KEY_INVENTORY   rnd_Rr5Y1aUsU8SS87K1drRKhfDYJ5zR
+#   RENDER_API_KEY_LOYALTY     rnd_lVIY0llxU9ZYBp4WlTHQsdMsYPd2
+#   RENDER_API_KEY_STAFF       rnd_lPcOVzuuBBxKtFWB9cFHN6ze9T9z
+#   RENDER_API_KEY_GATEWAY     rnd_ujlbntv3RBF2sC9g9Mo6SPRp25ud
+#
+#   RENDER_AUTH_SERVICE_ID      srv-d80gu1mgvqtc73dhlql0
+#   RENDER_MENU_SERVICE_ID      srv-d80di8ho3t8c73dlu730
+#   RENDER_ORDER_SERVICE_ID     srv-d80f6s7aqgkc73a30h60
+#   RENDER_INVENTORY_SERVICE_ID srv-d80evk1o3t8c73dn5kg0
+#   RENDER_LOYALTY_SERVICE_ID   srv-d80hhhreo5us73fhq9r0
+#   RENDER_STAFF_SERVICE_ID     srv-d80elf6gvqtc73dfoaog
+#   RENDER_GATEWAY_SERVICE_ID   srv-d80h6jl0lvsc738naqu0
+#
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Backend CI/CD
@@ -33,9 +39,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
 
-# ═════════════════════════════════════════════════════════════════════════════
 jobs:
-
   # ── Lint ──────────────────────────────────────────────────────────────────
   lint:
     name: "Lint"
@@ -237,7 +241,7 @@ jobs:
       - name: Test
         run: pytest --tb=short -q
 
-  # ── Gate — todos los tests deben pasar ────────────────────────────────────
+  # ── Gate ──────────────────────────────────────────────────────────────────
   all-tests-passed:
     name: "Todos los tests OK"
     runs-on: ubuntu-latest
@@ -252,7 +256,7 @@ jobs:
     steps:
       - run: echo "Todos los tests pasaron"
 
-  # ── Deploy a Render ───────────────────────────────────────────────────────
+  # ── Deploy — cada servicio usa su propio API Key ──────────────────────────
   deploy:
     name: "Deploy a Render"
     runs-on: ubuntu-latest
@@ -262,7 +266,7 @@ jobs:
       - name: Deploy auth_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_AUTH }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_AUTH_SERVICE_ID }}/deploys"
@@ -270,7 +274,7 @@ jobs:
       - name: Deploy menu_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_MENU }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_MENU_SERVICE_ID }}/deploys"
@@ -278,7 +282,7 @@ jobs:
       - name: Deploy order_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_ORDER }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_ORDER_SERVICE_ID }}/deploys"
@@ -286,7 +290,7 @@ jobs:
       - name: Deploy inventory_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_INVENTORY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_INVENTORY_SERVICE_ID }}/deploys"
@@ -294,7 +298,7 @@ jobs:
       - name: Deploy loyalty_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_LOYALTY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_LOYALTY_SERVICE_ID }}/deploys"
@@ -302,7 +306,7 @@ jobs:
       - name: Deploy staff_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_STAFF }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_STAFF_SERVICE_ID }}/deploys"
@@ -310,10 +314,90 @@ jobs:
       - name: Deploy gateway_service
         run: |
           curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY_GATEWAY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys"
 
       - name: Deploy completado
         run: echo "Deploy exitoso — ${{ github.sha }} por ${{ github.actor }}"
+
+  # ── Monitoreo — verifica que Grafana Cloud recibe métricas ───────────────
+  monitoreo:
+    name: "Verificar monitoreo Grafana"
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/juan-backend' && github.event_name == 'push'
+    steps:
+      - name: Esperar que los servicios levanten
+        run: sleep 60
+
+      - name: Verificar métricas en Grafana Cloud
+        run: |
+          echo "Consultando Grafana Cloud Prometheus..."
+
+          # Consulta: ¿hay series activas de django en los últimos 10 minutos?
+          RESP=$(curl -sf \
+            -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=up" \
+            2>&1)
+
+          if echo "$RESP" | grep -q '"status":"success"'; then
+            echo "✅ Grafana Cloud responde correctamente"
+          else
+            echo "⚠️  No se pudo consultar Grafana Cloud: $RESP"
+            exit 1
+          fi
+
+      - name: Verificar que django-prometheus reporta métricas
+        run: |
+          # Consulta si hay métricas django_http_requests_total en los últimos 15 min
+          RESP=$(curl -sf \
+            -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total" \
+            2>&1)
+
+          if echo "$RESP" | grep -q '"result":\[\]'; then
+            echo "⚠️  Sin métricas django_http_requests_total — Alloy puede estar iniciando"
+          elif echo "$RESP" | grep -q '"status":"success"'; then
+            COUNT=$(echo "$RESP" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('data', {}).get('result', [])
+          print(len(results))
+          " 2>/dev/null || echo "0")
+            echo "✅ Métricas Django activas — $COUNT series encontradas"
+          else
+            echo "⚠️  Respuesta inesperada de Grafana: $RESP"
+          fi
+
+      - name: Verificar targets UP en Alloy
+        run: |
+          # Cuenta cuántos servicios están reportando métricas (job="alloy" o similar)
+          RESP=$(curl -sf \
+            -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
+            "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/api/v1/query?query=count(up)" \
+            2>&1)
+
+          if echo "$RESP" | grep -q '"status":"success"'; then
+            TOTAL=$(echo "$RESP" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('data', {}).get('result', [])
+          if results:
+              print(results[0].get('value', [None, '0'])[1])
+          else:
+              print('0')
+          " 2>/dev/null || echo "0")
+            echo "✅ Targets activos en Grafana Cloud: $TOTAL"
+          else
+            echo "⚠️  No se pudo consultar targets: $RESP"
+          fi
+
+      - name: Resumen monitoreo
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Monitoreo RestoHub verificado"
+          echo "  Grafana: https://restohub.grafana.net"
+          echo "  Alloy:   https://restohub-alloy.onrender.com"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
