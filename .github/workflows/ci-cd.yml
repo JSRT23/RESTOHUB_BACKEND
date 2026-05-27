@@ -1,11 +1,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # RestoHub — Backend CI/CD
-# Monorepo: services/{auth,menu,order,inventory,loyalty,staff,gateway}_service
+# Repo  : JSRT23/RESTOHUB_BACKEND
+# Rama  : juan-backend
 #
 # FLUJO:
-#   push a cualquier rama  →  CI (lint + tests en paralelo)
-#   push/merge a main      →  CI → si todo pasa → Deploy a Render
-#                              si algo falla → bloquea el deploy
+#   Cualquier push/PR  →  Lint + 7 tests en paralelo (SQLite en memoria)
+#   Push a juan-backend + todos los tests pasan  →  Deploy a los 7 servicios en Render
+#
+# SECRETS requeridos  (GitHub → Settings → Secrets and variables → Actions):
+#   RENDER_API_KEY
+#   RENDER_AUTH_SERVICE_ID
+#   RENDER_MENU_SERVICE_ID
+#   RENDER_ORDER_SERVICE_ID
+#   RENDER_INVENTORY_SERVICE_ID
+#   RENDER_LOYALTY_SERVICE_ID
+#   RENDER_STAFF_SERVICE_ID
+#   RENDER_GATEWAY_SERVICE_ID
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Backend CI/CD
@@ -14,7 +24,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [main]
+    branches: [juan-backend]
 
 concurrency:
   group: backend-${{ github.ref }}
@@ -24,68 +34,38 @@ env:
   PYTHON_VERSION: "3.11"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# JOB 1: LINT — flake8 en todos los servicios
-# ═════════════════════════════════════════════════════════════════════════════
 jobs:
+
+  # ── Lint ──────────────────────────────────────────────────────────────────
   lint:
-    name: "🔍 Lint"
+    name: "Lint"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install flake8
-        run: pip install flake8
-
-      - name: Flake8 — errores críticos únicamente
+      - run: pip install flake8
+      - name: flake8 — solo errores críticos
         run: |
           flake8 services/ \
-            --count \
             --select=E9,F63,F7,F82 \
-            --show-source \
-            --statistics \
-            --exclude=migrations,__pycache__,.venv,venv,staticfiles
+            --exclude=migrations,__pycache__,.venv \
+            --show-source --statistics
 
-  # ═════════════════════════════════════════════════════════════════════════
-  # JOB 2: TESTS — cada servicio en paralelo con pytest
-  # ═════════════════════════════════════════════════════════════════════════
-
+  # ── auth_service ──────────────────────────────────────────────────────────
   test-auth:
-    name: "🧪 auth_service"
+    name: "Test auth_service"
     runs-on: ubuntu-latest
     needs: lint
     defaults:
       run:
         working-directory: services/auth_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: auth_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
     env:
-      POSTGRES_DB: auth_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: config.settings_test
       SECRET_KEY: ci-secret-key
       JWT_SECRET_KEY: ci-jwt-secret
       DEBUG: "True"
-      EMAIL_BACKEND: "gmail"
-      EMAIL_HOST_USER: ""
-      EMAIL_HOST_PASSWORD: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -93,163 +73,25 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/auth_service/requirements.txt
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-django
-      - name: Migrate
-        run: python manage.py migrate --run-syncdb
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ] || [ -f pyproject.toml ]; then
-            pytest --tb=short -q
-          else
-            python manage.py test --verbosity=2 --failfast
-          fi
-
-  test-order:
-    name: "🧪 order_service"
-    runs-on: ubuntu-latest
-    needs: lint
-    defaults:
-      run:
-        working-directory: services/order_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: order_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
-    env:
-      POSTGRES_DB: order_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
-      SECRET_KEY: ci-secret-key
-      DEBUG: "True"
-      # RabbitMQ apunta a puerto 1 — falla instantáneo, mockado en tests
-      RABBITMQ_HOST: localhost
-      RABBITMQ_PORT: "1"
-      RABBITMQ_USER: test
-      RABBITMQ_PASSWORD: test
-      RABBITMQ_VHOST: /
-      RABBITMQ_EXCHANGE: restohub
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: services/order_service/requirements.txt
-      - name: Install dependencies
+      - name: Install
         run: |
           pip install -r requirements.txt
           pip install -r requirements-test.txt
-      - name: Run tests (pytest con settings_test)
+      - name: Test
         run: pytest --tb=short -q
 
-  test-loyalty:
-    name: "🧪 loyalty_service"
-    runs-on: ubuntu-latest
-    needs: lint
-    defaults:
-      run:
-        working-directory: services/loyalty_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: loyalty_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["6379:6379"]
-    env:
-      POSTGRES_DB: loyalty_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
-      REDIS_URL: redis://localhost:6379/0
-      SECRET_KEY: ci-secret-key
-      DEBUG: "True"
-      RABBITMQ_HOST: localhost
-      RABBITMQ_PORT: "1"
-      RABBITMQ_USER: test
-      RABBITMQ_PASSWORD: test
-      RABBITMQ_VHOST: /
-      RABBITMQ_EXCHANGE: restohub
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: services/loyalty_service/requirements.txt
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-django pytest-mock 2>/dev/null || true
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest --tb=short -q
-          else
-            python manage.py migrate --run-syncdb && python manage.py test --verbosity=2 --failfast
-          fi
-
+  # ── menu_service ──────────────────────────────────────────────────────────
   test-menu:
-    name: "🧪 menu_service"
+    name: "Test menu_service"
     runs-on: ubuntu-latest
     needs: lint
     defaults:
       run:
         working-directory: services/menu_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: menu_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
     env:
-      POSTGRES_DB: menu_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: config.settings_test
       SECRET_KEY: ci-secret-key
       DEBUG: "True"
-      RABBITMQ_HOST: localhost
-      RABBITMQ_PORT: "1"
-      RABBITMQ_USER: test
-      RABBITMQ_PASSWORD: test
-      RABBITMQ_VHOST: /
-      RABBITMQ_EXCHANGE: restohub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -257,52 +99,51 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/menu_service/requirements.txt
-      - name: Install dependencies
+      - name: Install
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-django pytest-mock 2>/dev/null || true
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest --tb=short -q
-          else
-            python manage.py migrate --run-syncdb && python manage.py test --verbosity=2 --failfast
-          fi
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
 
+  # ── order_service ─────────────────────────────────────────────────────────
+  test-order:
+    name: "Test order_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/order_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/order_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── inventory_service ─────────────────────────────────────────────────────
   test-inventory:
-    name: "🧪 inventory_service"
+    name: "Test inventory_service"
     runs-on: ubuntu-latest
     needs: lint
     defaults:
       run:
         working-directory: services/inventory_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: inventory_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
     env:
-      POSTGRES_DB: inventory_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: config.settings_test
       SECRET_KEY: ci-secret-key
       DEBUG: "True"
-      RABBITMQ_HOST: localhost
-      RABBITMQ_PORT: "1"
-      RABBITMQ_USER: test
-      RABBITMQ_PASSWORD: test
-      RABBITMQ_VHOST: /
-      RABBITMQ_EXCHANGE: restohub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -310,52 +151,51 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/inventory_service/requirements.txt
-      - name: Install dependencies
+      - name: Install
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-django pytest-mock 2>/dev/null || true
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest --tb=short -q
-          else
-            python manage.py migrate --run-syncdb && python manage.py test --verbosity=2 --failfast
-          fi
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
 
+  # ── loyalty_service ───────────────────────────────────────────────────────
+  test-loyalty:
+    name: "Test loyalty_service"
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: services/loyalty_service
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
+      SECRET_KEY: ci-secret-key
+      DEBUG: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/loyalty_service/requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
+
+  # ── staff_service ─────────────────────────────────────────────────────────
   test-staff:
-    name: "🧪 staff_service"
+    name: "Test staff_service"
     runs-on: ubuntu-latest
     needs: lint
     defaults:
       run:
         working-directory: services/staff_service
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: staff_test
-          POSTGRES_USER: restohub
-          POSTGRES_PASSWORD: restohub
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports: ["5432:5432"]
     env:
-      POSTGRES_DB: staff_test
-      POSTGRES_USER: restohub
-      POSTGRES_PASSWORD: restohub
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: config.settings_test
       SECRET_KEY: ci-secret-key
       DEBUG: "True"
-      RABBITMQ_HOST: localhost
-      RABBITMQ_PORT: "1"
-      RABBITMQ_USER: test
-      RABBITMQ_PASSWORD: test
-      RABBITMQ_VHOST: /
-      RABBITMQ_EXCHANGE: restohub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -363,31 +203,26 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/staff_service/requirements.txt
-      - name: Install dependencies
+      - name: Install
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-django pytest-mock 2>/dev/null || true
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest --tb=short -q
-          else
-            python manage.py migrate --run-syncdb && python manage.py test --verbosity=2 --failfast
-          fi
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
 
+  # ── gateway_service ───────────────────────────────────────────────────────
   test-gateway:
-    name: "🧪 gateway_service"
+    name: "Test gateway_service"
     runs-on: ubuntu-latest
     needs: lint
     defaults:
       run:
         working-directory: services/gateway_service
     env:
+      DJANGO_SETTINGS_MODULE: config.settings_test
       SECRET_KEY: ci-secret-key
       JWT_SECRET_KEY: ci-jwt-secret
       DEBUG: "True"
-      MP_ACCESS_TOKEN: test-token
-      FRONTEND_URL: http://localhost:5175
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -395,50 +230,35 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: services/gateway_service/requirements.txt
-      - name: Install dependencies
+      - name: Install
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-django pytest-mock 2>/dev/null || true
-      - name: Run tests
-        run: |
-          if [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest --tb=short -q
-          else
-            python manage.py test --verbosity=2 --failfast
-          fi
+          pip install -r requirements-test.txt
+      - name: Test
+        run: pytest --tb=short -q
 
-  # ═════════════════════════════════════════════════════════════════════════
-  # JOB 3: GATE — todos los tests deben pasar
-  # ═════════════════════════════════════════════════════════════════════════
+  # ── Gate — todos los tests deben pasar ────────────────────────────────────
   all-tests-passed:
-    name: "✅ Gate — todos los tests OK"
+    name: "Todos los tests OK"
     runs-on: ubuntu-latest
     needs:
       - test-auth
-      - test-order
-      - test-loyalty
       - test-menu
+      - test-order
       - test-inventory
+      - test-loyalty
       - test-staff
       - test-gateway
     steps:
-      - run: echo "✅ Todos los tests pasaron — listo para deploy"
+      - run: echo "Todos los tests pasaron"
 
-  # ═════════════════════════════════════════════════════════════════════════
-  # JOB 4: DEPLOY — solo en push a main, solo si todos los tests pasan
-  # ═════════════════════════════════════════════════════════════════════════
+  # ── Deploy a Render ───────────────────────────────────────────────────────
   deploy:
-    name: "🚀 Deploy a Render"
+    name: "Deploy a Render"
     runs-on: ubuntu-latest
     needs: all-tests-passed
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment:
-      name: production
-      url: https://restohub-gateway-service.onrender.com
-
+    if: github.ref == 'refs/heads/juan-backend' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
-
       - name: Deploy auth_service
         run: |
           curl -sf -X POST \
@@ -495,43 +315,5 @@ jobs:
             -d '{"clearCache":false}' \
             "https://api.render.com/v1/services/${{ secrets.RENDER_GATEWAY_SERVICE_ID }}/deploys"
 
-      # ── Health check: esperar que el gateway esté vivo ────────────────────
-      - name: Health check — gateway
-        run: |
-          echo "Esperando que el gateway esté disponible..."
-          MAX=24
-          COUNT=0
-          until curl -sf https://restohub-gateway-service.onrender.com/health/ > /dev/null 2>&1; do
-            COUNT=$((COUNT+1))
-            if [ $COUNT -ge $MAX ]; then
-              echo "❌ Gateway no respondió después de $((MAX*15))s"
-              exit 1
-            fi
-            echo "Intento $COUNT/$MAX — esperando 15s..."
-            sleep 15
-          done
-          echo "✅ Gateway OK"
-
-      # ── Smoke test: GraphQL responde ──────────────────────────────────────
-      - name: Smoke test — GraphQL
-        run: |
-          RESP=$(curl -sf -X POST \
-            -H "Content-Type: application/json" \
-            -d '{"query":"{ __typename }"}' \
-            https://restohub-gateway-service.onrender.com/api/graphql/)
-          if echo "$RESP" | grep -q '"data"'; then
-            echo "✅ GraphQL OK"
-          else
-            echo "❌ GraphQL no responde: $RESP"
-            exit 1
-          fi
-
-      - name: ✅ Deploy completado
-        if: success()
-        run: |
-          echo "Deploy exitoso — commit ${{ github.sha }} por ${{ github.actor }}"
-
-      - name: ❌ Deploy falló
-        if: failure()
-        run: |
-          echo "Deploy FALLÓ — ver logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Deploy completado
+        run: echo "Deploy exitoso — ${{ github.sha }} por ${{ github.actor }}"
