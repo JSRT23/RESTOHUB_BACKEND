@@ -274,10 +274,11 @@ jobs:
           RESP=$(curl -s \
             -u "3232008:${{ secrets.GRAFANA_TOKEN }}" \
             "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=up")
+          echo "Respuesta Grafana: $RESP"
           if echo "$RESP" | grep -q '"status":"success"'; then
             echo "✅ Grafana Cloud OK"
           else
-            echo "⚠️  Grafana no responde: $RESP"
+            echo "⚠️  Grafana no responde correctamente"
             exit 1
           fi
 
