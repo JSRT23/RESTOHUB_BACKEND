@@ -1,6 +1,7 @@
 # order_service/app/orders/serializers.py
 # FIX: total_cobrado expuesto en serializers de lectura
 #      PedidoCambioEstadoSerializer acepta total_cobrado para registrarlo al entregar
+#      FIX numero_dia: usa __date lookup timezone-aware compatible con SQLite
 from rest_framework import serializers
 from django.utils import timezone
 from .models import Pedido, DetallePedido, ComandaCocina, SeguimientoPedido, EntregaPedido
@@ -109,7 +110,7 @@ class PedidoSerializer(serializers.ModelSerializer):
         fields = (
             "id", "restaurante_id", "cliente_id",
             "canal", "estado", "prioridad",
-            "total", "total_cobrado",          # FIX: expuesto
+            "total", "total_cobrado",
             "moneda", "mesa_id", "metodo_pago", "numero_dia",
             "fecha_creacion", "fecha_entrega_estimada",
             "detalles", "comandas", "seguimientos", "entrega",
@@ -123,7 +124,7 @@ class PedidoListSerializer(serializers.ModelSerializer):
         fields = (
             "id", "restaurante_id", "cliente_id",
             "canal", "estado", "prioridad",
-            "total", "total_cobrado",          # FIX: expuesto en lista
+            "total", "total_cobrado",
             "moneda", "metodo_pago", "numero_dia", "fecha_creacion",
         )
         read_only_fields = ("id", "fecha_creacion")
@@ -150,12 +151,22 @@ class PedidoWriteSerializer(serializers.ModelSerializer):
         detalles_data = validated_data.pop("detalles")
         total = sum(d["precio_unitario"] * d["cantidad"]
                     for d in detalles_data)
+
+        # FIX: calcular numero_dia sin depender de __date lookup con timezone
+        # Usamos rango de datetime explícito para compatibilidad con SQLite
         from django.db.models import Max
-        hoy = timezone.now().date()
+        import datetime
+        now = timezone.now()
+        # Inicio y fin del día en UTC (SQLite guarda en UTC)
+        inicio_dia = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        fin_dia = inicio_dia + datetime.timedelta(days=1)
+
         maximo = Pedido.objects.filter(
             restaurante_id=validated_data.get("restaurante_id"),
-            fecha_creacion__date=hoy,
+            fecha_creacion__gte=inicio_dia,
+            fecha_creacion__lt=fin_dia,
         ).aggregate(m=Max("numero_dia"))["m"]
+
         numero_dia = (maximo or 0) + 1
         pedido = Pedido.objects.create(
             **validated_data, total=total, estado="RECIBIDO", numero_dia=numero_dia)
@@ -170,7 +181,6 @@ class PedidoCambioEstadoSerializer(serializers.Serializer):
     descripcion = serializers.CharField(required=False, allow_blank=True)
     metodo_pago = serializers.CharField(
         required=False, allow_blank=True, allow_null=True)
-    # FIX: total_cobrado — total real después de descuentos de cupones/puntos
     total_cobrado = serializers.DecimalField(
         max_digits=10, decimal_places=2,
         required=False, allow_null=True,
