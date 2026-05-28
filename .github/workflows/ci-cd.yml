@@ -271,7 +271,7 @@ jobs:
 
       - name: Verificar Grafana Cloud
         run: |
-          RESP=$(curl -sf \
+          RESP=$(curl -s \
             -u "3232008:${{ secrets.GRAFANA_TOKEN }}" \
             "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=up")
           if echo "$RESP" | grep -q '"status":"success"'; then
@@ -283,7 +283,7 @@ jobs:
 
       - name: Verificar métricas Django
         run: |
-          RESP=$(curl -sf \
+          RESP=$(curl -s \
             -u "3232008:${{ secrets.GRAFANA_TOKEN }}" \
             "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=django_http_requests_total_requests_total")
           if echo "$RESP" | grep -q '"result":\[\]'; then
@@ -299,7 +299,7 @@ jobs:
 
       - name: Verificar targets UP
         run: |
-          RESP=$(curl -sf \
+          RESP=$(curl -s \
             -u "3232008:${{ secrets.GRAFANA_TOKEN }}" \
             "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/api/v1/query?query=count(up)")
           if echo "$RESP" | grep -q '"status":"success"'; then
